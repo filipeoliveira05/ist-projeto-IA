@@ -242,7 +242,38 @@ class Board:
     # TODO: outros metodos da classe Board
 
 
+def forms_2x2(board, abs_cells_to_fill):
+    for r, c in abs_cells_to_fill:
+        for dr, dc in [(0, 0), (0, 1), (1, 0), (1, 1)]:
+            block = {(r+dr, c+dc), (r+dr, c+dc-1), (r+dr-1, c+dc), (r+dr-1, c+dc-1)}
+            if len(block) == 4 and all(
+                0 <= rr < board.N and 0 <= cc < board.N and
+                (board.solution_grid[rr][cc] in ALLOWED_TETROMINO_TYPES or (rr, cc) in abs_cells_to_fill)
+                for rr, cc in block
+            ):
+                return True
+    return False
 
+
+def region_cells_connected(region_cells, filled_cells):
+    """Verifica se as células livres da região continuam conectadas."""
+    free_cells = region_cells - filled_cells
+    if not free_cells:
+        return True
+    # BFS/DFS
+    stack = [next(iter(free_cells))]
+    visited = set()
+    while stack:
+        cell = stack.pop()
+        if cell in visited:
+            continue
+        visited.add(cell)
+        r, c = cell
+        for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+            neighbor = (r+dr, c+dc)
+            if neighbor in free_cells and neighbor not in visited:
+                stack.append(neighbor)
+    return visited == free_cells
 
 
 class Nuruomino(Problem):
@@ -252,14 +283,16 @@ class Nuruomino(Problem):
         super().__init__(NuruominoState(initial_board))
         
         # Pré-processamento útil:
-        self.all_region_ids = sorted(list(initial_board.regions_map.keys()))
+        self.all_region_ids = sorted(
+            initial_board.regions_map.keys(),
+            key=lambda rid: len(initial_board.regions_map[rid]['cells']))
         self.N = initial_board.N
         
         # Gera as variantes de tetraminós uma vez, se ainda não foram geradas
         if not TETROMINO_VARIANTS:
             generate_all_tetromino_variants()
 
-
+    
     def actions(self, state: NuruominoState):
         """Retorna uma lista de ações que podem ser executadas a
         partir do estado passado como argumento. 
@@ -299,6 +332,11 @@ class Nuruomino(Problem):
                     )
                     
                     # Validações para esta colocação:
+
+                    # 0. Não pode sobrepor células já ocupadas por outras peças
+                    if any(board.solution_grid[r][c] in ALLOWED_TETROMINO_TYPES for r, c in abs_cells_to_fill):
+                        continue
+                    
                     # 1. Peça cabe inteiramente na região (todas as abs_cells estão em region_cells_set)
                     if not abs_cells_to_fill.issubset(region_cells_set):
                         continue
@@ -322,6 +360,13 @@ class Nuruomino(Problem):
                         continue
                     
                     # 3. Regra de não formar 2x2 com esta nova peça E as já existentes
+                    if forms_2x2(board, abs_cells_to_fill):
+                        continue
+
+                    filled_cells = abs_cells_to_fill
+                    if not region_cells_connected(region_cells_set, filled_cells):
+                        continue
+
                     # Esta verificação é mais complexa aqui, pois envolve verificar todos os possíveis 2x2
                     # que esta nova peça poderia criar. Pode ser mais eficiente verificar no goal_test
                     # ou após a colocação, mas para pruning, pode ser feita aqui (parcialmente).
