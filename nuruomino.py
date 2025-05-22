@@ -71,12 +71,12 @@ def generate_all_tetromino_variants():
 
 
 class NuruominoState:
-    state_id = 0
+    state_id_counter = 0
 
-    def __init__(self, board):
+    def __init__(self, board: 'Board'):
         self.board = board
-        self.id = NuruominoState.state_id
-        NuruominoState.state_id += 1
+        self.id = NuruominoState.state_id_counter
+        NuruominoState.state_id_counter += 1
 
     def __lt__(self, other):
         """ Este método é utilizado em caso de empate na gestão da lista
@@ -242,38 +242,7 @@ class Board:
     # TODO: outros metodos da classe Board
 
 
-def forms_2x2(board, abs_cells_to_fill):
-    for r, c in abs_cells_to_fill:
-        for dr, dc in [(0, 0), (0, 1), (1, 0), (1, 1)]:
-            block = {(r+dr, c+dc), (r+dr, c+dc-1), (r+dr-1, c+dc), (r+dr-1, c+dc-1)}
-            if len(block) == 4 and all(
-                0 <= rr < board.N and 0 <= cc < board.N and
-                (board.solution_grid[rr][cc] in ALLOWED_TETROMINO_TYPES or (rr, cc) in abs_cells_to_fill)
-                for rr, cc in block
-            ):
-                return True
-    return False
 
-
-def region_cells_connected(region_cells, filled_cells):
-    """Verifica se as células livres da região continuam conectadas."""
-    free_cells = region_cells - filled_cells
-    if not free_cells:
-        return True
-    # BFS/DFS
-    stack = [next(iter(free_cells))]
-    visited = set()
-    while stack:
-        cell = stack.pop()
-        if cell in visited:
-            continue
-        visited.add(cell)
-        r, c = cell
-        for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
-            neighbor = (r+dr, c+dc)
-            if neighbor in free_cells and neighbor not in visited:
-                stack.append(neighbor)
-    return visited == free_cells
 
 
 class Nuruomino(Problem):
@@ -283,16 +252,14 @@ class Nuruomino(Problem):
         super().__init__(NuruominoState(initial_board))
         
         # Pré-processamento útil:
-        self.all_region_ids = sorted(
-            initial_board.regions_map.keys(),
-            key=lambda rid: len(initial_board.regions_map[rid]['cells']))
+        self.all_region_ids = sorted(list(initial_board.regions_map.keys()))
         self.N = initial_board.N
         
         # Gera as variantes de tetraminós uma vez, se ainda não foram geradas
         if not TETROMINO_VARIANTS:
             generate_all_tetromino_variants()
 
-    
+
     def actions(self, state: NuruominoState):
         """Retorna uma lista de ações que podem ser executadas a
         partir do estado passado como argumento. 
@@ -332,11 +299,6 @@ class Nuruomino(Problem):
                     )
                     
                     # Validações para esta colocação:
-
-                    # 0. Não pode sobrepor células já ocupadas por outras peças
-                    if any(board.solution_grid[r][c] in ALLOWED_TETROMINO_TYPES for r, c in abs_cells_to_fill):
-                        continue
-                    
                     # 1. Peça cabe inteiramente na região (todas as abs_cells estão em region_cells_set)
                     if not abs_cells_to_fill.issubset(region_cells_set):
                         continue
@@ -360,13 +322,6 @@ class Nuruomino(Problem):
                         continue
                     
                     # 3. Regra de não formar 2x2 com esta nova peça E as já existentes
-                    if forms_2x2(board, abs_cells_to_fill):
-                        continue
-
-                    filled_cells = abs_cells_to_fill
-                    if not region_cells_connected(region_cells_set, filled_cells):
-                        continue
-
                     # Esta verificação é mais complexa aqui, pois envolve verificar todos os possíveis 2x2
                     # que esta nova peça poderia criar. Pode ser mais eficiente verificar no goal_test
                     # ou após a colocação, mas para pruning, pode ser feita aqui (parcialmente).
@@ -474,226 +429,39 @@ class Nuruomino(Problem):
 
 
 if __name__ == '__main__':
-    print("--- Iniciando Testes dos Exemplos ---")
-    
-    # ---------------------------------------------------------------------------
-    # Preparação Comum: Ler a grelha uma vez para todos os exemplos
-    # ---------------------------------------------------------------------------
+    # 1. Gerar as variantes dos tetraminós
+    try:
+        generate_all_tetromino_variants()
+    except Exception as e:
+        sys.exit(1)
+
+    # 2. Ler a instância do problema
     initial_board_obj = None
     try:
-        # Simula a leitura do stdin apenas uma vez no início
-        # Se for executar com redirecionamento, Board.parse_instance() lerá do stdin real
-        print("A ler a instância do problema (stdin)...")
         initial_board_obj = Board.parse_instance()
-        print("Instância lida com sucesso.")
-        generate_all_tetromino_variants() # Gerar variantes de tetraminós
-        print("Variantes de tetraminós geradas.")
     except Exception as e:
-        print(f"ERRO FATAL ao ler instância ou gerar variantes: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1) # Termina se não conseguir ler a grelha
+        sys.exit(1)
 
-    # ---------------------------------------------------------------------------
-    # Exemplo 1: board.adjacent_regions()
-    # ---------------------------------------------------------------------------
-    print("\n--- Teste do Exemplo 1 ---")
-    if initial_board_obj:
-        try:
-            # Usar strings para IDs de região
-            region_id_1_str = "1"
-            region_id_3_str = "3"
-            
-            print(f"initial_board_obj.adjacent_regions('{region_id_1_str}')")
-            print(initial_board_obj.adjacent_regions(region_id_1_str)) # Output: [2, 3]
+    # 3. Criar a instância do problema Nuruomino
+    nuruomino_problem = None
+    try:
+        nuruomino_problem = Nuruomino(initial_board_obj)
+    except Exception as e:
+        sys.exit(1)
 
-            print(f"initial_board_obj.adjacent_regions('{region_id_3_str}')")
-            print(initial_board_obj.adjacent_regions(region_id_3_str)) # Output: [1, 2, 4, 5]
-        except Exception as e:
-            print(f"Erro no Exemplo 1: {e}")
-            import traceback; traceback.print_exc()
-
-    # ---------------------------------------------------------------------------
-    # Exemplo 2: problem.result() e board.get_value(), board.adjacent_values()
-    # ---------------------------------------------------------------------------
-    print("\n--- Teste do Exemplo 2 ---")
-    if initial_board_obj:
-        try:
-            problem_ex2 = Nuruomino(deepcopy(initial_board_obj)) # Usar uma cópia para não afetar outros testes
-            initial_state_ex2 = problem_ex2.initial # Equivalente a NuruominoState(board)
-
-            print(f"initial_state_ex2.board.get_value(2, 1)")
-            # A grelha da Figura 5/Input tem '1' na região (2,1) no input
-            # Célula (2,0) é da região '1', (2,1) é da região '3' no input fornecido.
-            # Corrigindo o exemplo para (2,0) que é da região '1'
-            print(initial_state_ex2.board.get_value(2, 0)) # Output: 1 (ID da região original)
-
-            # Ação: (region_id, 'L', frozenset_of_absolute_cells)
-            # Para a região "1" (células (0,0),(0,1),(1,0),(2,0) no input)
-            # A peça 'L' na solução da Figura 4b ocupa (0,0),(1,0),(2,0),(2,1)
-            # No entanto, a célula (2,1) NÃO pertence à região "1" do input.
-            # A região "1" no input é: (0,0), (0,1), (1,0), (2,0)
-            # Uma peça L válida para a região "1" seria, por exemplo:
-            # frozenset([(0,0), (1,0), (2,0), (0,1)]) - que é um L rodado
-            # O Exemplo 2 diz "cuja forma é [[1,1],[1,0],[1,0]]". Isso é confuso.
-            # Vamos usar as coordenadas absolutas da PEÇA L da SOLUÇÃO para a REGIÃO "1":
-            # Região "1": (0,0), (0,1), (1,0), (2,0)
-            # Peça L na solução: (0,0), (1,0), (2,0), (0,1) [Esta é uma peça L que cabe na região "1"]
-            # O enunciado do exemplo 2 (1, 'L', [[1, 1],[1, 0],[1, 0]]) não especifica as coordenadas absolutas.
-            # Vou definir uma peça L que cabe na região '1' e corresponde à solução
-            action_L_region1 = ("1", 'L', frozenset([(0,0), (1,0), (2,0), (0,1)])) 
-                                        # Esta forma de L ((0,0),(1,0),(2,0),(0,1)) é uma rotação/reflexão do L base
-                                        # e cabe perfeitamente na região "1" do input: (0,0),(0,1),(1,0),(2,0)
-
-            print(f"problem_ex2.result(initial_state_ex2, {action_L_region1})")
-            s1_ex2 = problem_ex2.result(initial_state_ex2, action_L_region1)
-            
-            print(f"s1_ex2.board.get_value(2, 0)") # (2,0) agora deve ser 'L'
-            print(s1_ex2.board.get_value(2, 0))   # Output: L
-            
-            print(f"s1_ex2.board.adjacent_values(2, 2)") # Posição (2,2) é da região "3" (input)
-                                                         # Vizinhos de (2,2) após colocar L em (2,0):
-                                                         # (1,1)R2, (1,2)R2, (1,3)R2
-                                                         # (2,1)R3,           (2,3)R2 <--- L foi colocado na reg 1
-                                                         # (3,1)R3, (3,2)R3, (3,3)R3
-                                                         # Na solution_grid do s1_ex2:
-                                                         # (2,0) é L. (0,0)L, (1,0)L, (0,1)L
-                                                         # (2,2) continua '3'.
-                                                         # Vizinhos de (2,2) em s1_ex2.solution_grid:
-                                                         # (1,1)='2', (1,2)='2', (1,3)='2'
-                                                         # (2,1)='3',            (2,3)='2'
-                                                         # (3,1)='3', (3,2)='3', (3,3)='3'
-                                                         # O exemplo de output [L,L,2,L,2,L,3,3] parece implicar que a peça L foi colocada
-                                                         # de forma a afetar os vizinhos de (2,2) e que (2,1) virou L.
-                                                         # Isso só aconteceria se a região 1 incluísse (2,1) E a peça L o cobrisse.
-                                                         # Com a Região "1" do input, o output esperado é diferente.
-                                                         # Output do Exemplo: [L,L,2,L,2,L,3,3]
-                                                         # Meu Output esperado com a peça L em (0,0),(1,0),(2,0),(0,1):
-                                                         # Vizinhos de (2,2) na solution_grid de s1_ex2:
-                                                         # (1,1)R2 (1,2)R2 (1,3)R2
-                                                         # (2,1)R3         (2,3)R2
-                                                         # (3,1)R3 (3,2)R3 (3,3)R3
-                                                         # Se (2,1) é '3' e (2,0) é 'L':
-                                                         # adj_vals(2,2) => ['2','2','2', '3','2', '3','3','3']
-            print(s1_ex2.board.adjacent_values(2,2)) # O output dependerá da peça L exata
-        except Exception as e:
-            print(f"Erro no Exemplo 2: {e}")
-            import traceback; traceback.print_exc()
-
-    # ---------------------------------------------------------------------------
-    # Exemplo 3: Sequência de ações para resolver e goal_test
-    # ---------------------------------------------------------------------------
-    print("\n--- Teste do Exemplo 3 ---")
-    if initial_board_obj:
-        try:
-            problem_ex3 = Nuruomino(deepcopy(initial_board_obj))
-            s0_ex3 = problem_ex3.initial
-
-            # Definir as peças da SOLUÇÃO da Figura 4b para cada região do INPUT da Figura 5
-            # Região "1" (input): (0,0),(0,1),(1,0),(2,0) -> Peça L na Solução: (0,0),(1,0),(2,0),(0,1)
-            # Região "2" (input): (0,2),(0,3),(1,1),(1,2),(1,3),(2,3) -> Peça S na Solução: (0,2),(0,3),(1,2),(1,3)
-            # Região "3" (input): (0,4)... -> Peça T na Solução: (3,3),(4,2),(4,3),(4,4) (Precisa verificar se cabe!)
-            # Região "4" (input): (4,0),(4,1),(4,2),(5,0) -> Peça L na Solução: (4,0),(5,0),(4,1),(4,2) (outro L)
-            # Região "5" (input): (2,5),(3,5),(4,5),(5,5) -> Peça I na Solução: (2,5),(3,5),(4,5),(5,5)
-            
-            # Ações (region_id_str, type, frozenset_abs_coords)
-            # Estas são as peças da SOLUÇÃO DA FIGURA 4b, mapeadas para as regiões do INPUT DA FIGURA 5
-            action1 = ("1", 'L', frozenset([(0,0),(1,0),(2,0),(0,1)])) # L rosa em (a1,a2,a3,b1)
-            action2 = ("2", 'S', frozenset([(0,2),(0,3),(1,2),(1,3)])) # S verde em (c1,d1,c2,d2)
-            # Para a Região "3" do input, a peça T da solução é (3,3),(4,2),(4,3),(4,4)
-            # Células da Região "3" (input): (0,4),(0,5),(1,4),(1,5),(2,1),(2,2),(2,4),(3,0),(3,1),(3,2),(3,3),(3,4),(4,3),(4,4),(5,1),(5,2),(5,3),(5,4)
-            # Esta peça T ((3,3),(4,2),(4,3),(4,4)) não cabe na região "3". (4,2) não está na região "3".
-            # O Exemplo 3 parece usar uma numeração de regiões e/ou forma de peças diferente da Figura 4b/5.
-            # Vou usar as peças da *solução dada no output do exemplo 3*:
-            # Peça L (rosa) na Região 1: (0,0),(1,0),(2,0),(0,1) -> corresponde à Figura 4b (0,0),(1,0),(2,0),(2,1) se a região 1 fosse maior
-            # Peça S (verde) na Região 2: (0,2),(0,3),(1,2),(1,3)
-            # Peça T (roxo claro) na Região ??: (3,3),(4,3),(5,3),(4,2) - esta é (d4,d5,d6,c5)
-            # Peça L (rosa escuro) na Região ??: (4,0),(5,0),(5,1),(5,2) - esta é (a5,a6,b6,c6)
-            # Peça I (azul) na Região ??: (2,5),(3,5),(4,5),(5,5)
-            
-            # Mapeando a SOLUÇÃO do Exemplo 3 para as regiões do INPUT (Figura 5)
-            # Região "1" (input) -> L: (0,0),(1,0),(2,0),(0,1)
-            # Região "2" (input) -> S: (0,2),(1,2),(0,3),(1,3)
-            # Região "3" (input) -> T: A peça T na sol. exemplo 3 é (d4,d5,d6,c5) = (3,3),(4,3),(5,3),(4,2)
-                                     # Células da Região 3 (input): (0,4),(0,5),(1,4),(1,5),(2,1),(2,2),(2,4), (3,0),(3,1),(3,2),(3,3),(3,4), (4,3),(4,4), (5,1),(5,2),(5,3),(5,4)
-                                     # (4,2) NÃO ESTÁ na Região 3 do input. (5,3) ESTÁ.
-                                     # O T da solução do exemplo está em (3,3),(4,3),(5,3) e (4,2).
-                                     # Para caber na região 3 do input, um T poderia ser (3,3),(4,3),(5,3),(3,2) ou (3,3),(4,3),(5,3),(4,4)
-                                     # O T da solução é (d4)T (d5)T (d6)T (c5)T. (3,3)T (4,3)T (5,3)T (4,2)T
-                                     # No input, (4,2) é Região "4".
-                                     # ISTO INDICA QUE A NUMERAÇÃO DE REGIÕES DO EXEMPLO 3 PODE NÃO SER A DA FIGURA 5.
-                                     # OU as peças do exemplo são simbólicas e não representam as coordenadas exatas.
-
-            # Para Exemplo 3, vou assumir que as ações são para as regiões 1,2,3,4,5 do *problema*
-            # e que as peças são as da solução final.
-            # As peças da solução final são:
-            sol_L1 = ("1", 'L', frozenset([(0,0),(1,0),(2,0),(0,1)])) # Região "1" do input
-            sol_S2 = ("2", 'S', frozenset([(0,2),(1,2),(0,3),(1,3)])) # Região "2" do input
-            # Para a solução do Exemplo 3: T roxo é (c5,d4,d5,d6) = (4,2),(3,3),(4,3),(5,3)
-            # Região "3" do input contém (3,3),(4,3),(5,3) e (3,2),(3,4),(4,4),(5,1),(5,2),(5,4) etc. NÃO contém (4,2)
-            # Região "4" do input contém (4,0),(4,1),(4,2),(5,0). A peça T (4,2) está aqui.
-            # Região "5" do input contém (2,5),(3,5),(4,5),(5,5)
-            
-            # Tentativa de mapear as peças da SOLUÇÃO dada no output do Exemplo 3
-            # para as REGIÕES do INPUT (Figura 5)
-            # L rosa claro (a1,b1,a2,a3) -> (0,0),(0,1),(1,0),(2,0) -> Região 1
-            s1_ex3 = problem_ex3.result(s0_ex3, ("1", 'L', frozenset([(0,0),(0,1),(1,0),(2,0)])))
-            
-            # S verde (c1,d1,c2,d2) -> (0,2),(0,3),(1,1),(1,2) -> Região 2 (note que (1,1) é da reg 2 no input)
-            s2_ex3 = problem_ex3.result(s1_ex3, ("2", 'S', frozenset([(0,2),(0,3),(1,1),(1,2)])))
-            
-            # T roxo claro (c5,d4,d5,d6) -> (4,2),(3,3),(4,3),(5,3)
-            # A célula (4,2) é da Região "4". As células (3,3),(4,3),(5,3) são da Região "3".
-            # Esta peça T não pode ser colocada numa única região do input.
-            # O EXEMPLO 3 PARECE ASSUMIR UMA DEFINIÇÃO DE REGIÕES DIFERENTE DA FIGURA 5 / test-01.txt
-            # OU as ações dadas são simbólicas e o `problem.result` deve encontrar uma variante.
-            # Dado que `problem.result` recebe coordenadas absolutas, o Exemplo 3 está mal definido
-            # se usarmos o input de test-01.txt que corresponde à Figura 5.
-
-            # VOU IGNORAR AS AÇÕES ESPECÍFICAS DO EXEMPLO 3 E TESTAR APENAS COM O goal_node DO EXEMPLO 4
-            # porque as ações do Exemplo 3 não são consistentes com o input test-01.txt / Figura 5
-            # E a definição de 'problem.result'.
-            print("AVISO: As ações do Exemplo 3 não são consistentes com o input 'test-01.txt' (Figura 5).")
-            print("A testar goal_test com um estado parcialmente preenchido e um estado objetivo (se Exemplo 4 funcionar).")
-            # Para testar goal_test(s2), precisamos de um s2 válido.
-            # Se s2_ex3 acima for válido (apenas peças em Região 1 e 2):
-            if 's2_ex3' in locals():
-                 print(f"problem_ex3.goal_test(s2_ex3)")
-                 print(problem_ex3.goal_test(s2_ex3)) # Output: False
-
-        except Exception as e:
-            print(f"Erro no Exemplo 3: {e}")
-            import traceback; traceback.print_exc()
-
-    # ---------------------------------------------------------------------------
-    # Exemplo 4: depth_first_tree_search
-    # ---------------------------------------------------------------------------
-    print("\n--- Teste do Exemplo 4 ---")
-    if initial_board_obj:
-        try:
-            problem_ex4 = Nuruomino(deepcopy(initial_board_obj))
-            print("A executar depth_first_tree_search... (Pode demorar!)")
-            goal_node_ex4 = depth_first_tree_search(problem_ex4)
-            
-            if goal_node_ex4:
-                print("Nó objetivo encontrado pela procura em profundidade!")
-                print(f"problem_ex4.goal_test(goal_node_ex4.state)")
-                is_goal = problem_ex4.goal_test(goal_node_ex4.state)
-                print(is_goal) # Output: True
-                
-                print("Solution:\n", goal_node_ex4.state.board.print_board(), sep="")
-                # Output: (a grelha da solução)
-
-                # Agora podemos usar este goal_node.state para o teste final do Exemplo 3
-                if 'problem_ex3' in locals() and is_goal: # Se Exemplo 3 foi inicializado
-                    print(f"\nRetomando Exemplo 3 com estado objetivo do Exemplo 4:")
-                    print(f"problem_ex3.goal_test(goal_node_ex4.state)") # Reusa problem_ex3 para consistência
-                    print(problem_ex3.goal_test(goal_node_ex4.state)) # Output: True
-            else:
-                print("Nenhum nó objetivo encontrado pela procura em profundidade.")
-        except Exception as e:
-            print(f"Erro no Exemplo 4: {e}")
-            import traceback; traceback.print_exc()
-
-
-    print("\n--- Fim de Todos os Testes ---")
+    # 4. Resolver o problema
+    goal_node = None
+    try:
+        # Pode mudar para astar_search(nuruomino_problem) se quiser testar
+        goal_node = astar_search(nuruomino_problem)
+    except Exception as e:
+        sys.exit(1)
+    
+    # 5. Apresentar a solução
+    if goal_node:
+        if nuruomino_problem.goal_test(goal_node.state):
+            print(goal_node.state.board.print_board())
+        else:
+            pass
+    else:
+        pass
