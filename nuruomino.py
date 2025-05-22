@@ -70,6 +70,60 @@ def generate_all_tetromino_variants():
         TETROMINO_VARIANTS[name] = [list(variant) for variant in variants]
 
 
+def _check_if_creates_2x2_block(N_board_size, currently_filled_cells_set, new_piece_cells_set):
+    """
+    Verifica se a adição de 'new_piece_cells_set' a 'currently_filled_cells_set'
+    criaria algum bloco 2x2 preenchido.
+
+    Args:
+        N_board_size (int): A dimensão N da grelha.
+        currently_filled_cells_set (set): Conjunto de tuplos (r,c) das células já preenchidas no tabuleiro.
+        new_piece_cells_set (set): Conjunto de tuplos (r,c) das células da nova peça a ser colocada.
+
+    Returns:
+        bool: True se um bloco 2x2 for criado, False caso contrário.
+    """
+    # Considera o estado prospectivo do tabuleiro com a nova peça adicionada
+    prospective_all_filled = currently_filled_cells_set.union(new_piece_cells_set)
+
+    # Só precisamos verificar os quadrados 2x2 que poderiam ser completados
+    # pela adição das new_piece_cells_set.
+    # Um quadrado 2x2 é definido pelo seu canto superior esquerdo (r_anchor, c_anchor).
+    # Iteramos por todas as células da nova peça. Cada uma delas pode fazer parte
+    # de até quatro quadrados 2x2 diferentes (como canto sup-esq, sup-dir, inf-esq, inf-dir).
+    
+    potential_2x2_top_left_anchors = set()
+    for r_new, c_new in new_piece_cells_set:
+        # Se (r_new, c_new) é o canto inferior direito de um 2x2, o canto superior esquerdo é (r_new-1, c_new-1)
+        potential_2x2_top_left_anchors.add((r_new - 1, c_new - 1))
+        # Se (r_new, c_new) é o canto inferior esquerdo de um 2x2, o canto superior esquerdo é (r_new-1, c_new)
+        potential_2x2_top_left_anchors.add((r_new - 1, c_new))
+        # Se (r_new, c_new) é o canto superior direito de um 2x2, o canto superior esquerdo é (r_new, c_new-1)
+        potential_2x2_top_left_anchors.add((r_new, c_new - 1))
+        # Se (r_new, c_new) é o canto superior esquerdo de um 2x2, o canto superior esquerdo é (r_new, c_new)
+        potential_2x2_top_left_anchors.add((r_new, c_new))
+
+    for r_anchor, c_anchor in potential_2x2_top_left_anchors:
+        # Verifica se este (r_anchor, c_anchor) é um canto superior esquerdo válido para um 2x2
+        if not (0 <= r_anchor < N_board_size - 1 and 0 <= c_anchor < N_board_size - 1):
+            continue # Fora dos limites para ser um canto superior esquerdo de um 2x2 completo na grelha
+
+        # Verifica se todas as 4 células deste bloco 2x2 estão em prospective_all_filled
+        is_block = True
+        for dr_block in [0, 1]:
+            for dc_block in [0, 1]:
+                if (r_anchor + dr_block, c_anchor + dc_block) not in prospective_all_filled:
+                    is_block = False
+                    break
+            if not is_block:
+                break
+        
+        if is_block:
+            return True # Encontrou um bloco 2x2 que seria criado
+
+    return False # Nenhum bloco 2x2 seria criado
+
+
 class NuruominoState:
     state_id_counter = 0
 
@@ -239,6 +293,34 @@ class Board:
         return hash((self.N, grid_tuple, tuple(frozen_assignments)))
 
 
+    def count_almost_2x2_blocks_internal(self):
+        """
+        Conta quantos blocos 2x2 na grelha têm exatamente 3 das suas 4 células
+        preenchidas pelas peças nos assignments DESTE tabuleiro.
+        """
+        count = 0
+        all_filled_cells = set()
+        for data in self.assignments.values(): # Acessa self.assignments
+            all_filled_cells.update(data['abs_cells'])
+
+        if not all_filled_cells: 
+            return 0
+
+        for r in range(self.N - 1): # Acessa self.N
+            for c in range(self.N - 1):
+                filled_in_block = 0
+                cells_in_block = [
+                    (r, c), (r + 1, c),
+                    (r, c + 1), (r + 1, c + 1)
+                ]
+                for cell_coord in cells_in_block:
+                    if cell_coord in all_filled_cells:
+                        filled_in_block += 1
+                
+                if filled_in_block == 3:
+                    count += 1
+        return count
+    
     # TODO: outros metodos da classe Board
 
 
@@ -261,71 +343,55 @@ class Nuruomino(Problem):
 
 
     def actions(self, state: NuruominoState):
-        """Retorna uma lista de ações que podem ser executadas a
-        partir do estado passado como argumento. 
-        Uma ação é (region_id_to_fill, tetromino_type, frozenset_of_absolute_cells_to_fill)
-        """
-        board = state.board # O estado contém um objeto Board
-        
-        # Encontrar a primeira região (por ordem canónica) ainda não preenchida
+        board = state.board
         region_to_fill_id = None
         for r_id in self.all_region_ids:
             if r_id not in board.assignments:
                 region_to_fill_id = r_id
                 break
-        
-        if region_to_fill_id is None: # Todas as regiões preenchidas, não há mais ações
-            return []
+        if region_to_fill_id is None: return []
 
         possible_actions = []
         region_cells_set = board.get_region_cells(region_to_fill_id)
 
-        for tetromino_type in ALLOWED_TETROMINO_TYPES:
-            if tetromino_type not in TETROMINO_VARIANTS: continue # Segurança
+        # Obter as células já preenchidas no tabuleiro ANTES desta ação
+        # (para a verificação de 2x2)
+        currently_filled_cells = set()
+        for data in board.assignments.values():
+            currently_filled_cells.update(data['abs_cells'])
 
+        for tetromino_type in ALLOWED_TETROMINO_TYPES:
+            if tetromino_type not in TETROMINO_VARIANTS: continue
             for variant_rel_coords_list in TETROMINO_VARIANTS[tetromino_type]:
-                variant_rel_coords = frozenset(variant_rel_coords_list) # Garantir frozenset
-                
-                # Tentar ancorar a variante em cada célula da região
-                # A âncora pode ser a célula mais a cima e à esquerda da peça,
-                # e esta âncora da peça deve estar numa célula da região.
-                
-                # Como as variantes já estão normalizadas (canto sup-esq em (0,0) relativo)
-                # podemos iterar pelas células da região como o ponto de ancoragem para (0,0) da peça.
+                variant_rel_coords = frozenset(variant_rel_coords_list)
                 for anchor_r, anchor_c in region_cells_set:
                     abs_cells_to_fill = frozenset(
                         (r_rel + anchor_r, c_rel + anchor_c)
                         for r_rel, c_rel in variant_rel_coords
                     )
                     
-                    # Validações para esta colocação:
-                    # 1. Peça cabe inteiramente na região (todas as abs_cells estão em region_cells_set)
                     if not abs_cells_to_fill.issubset(region_cells_set):
                         continue
 
-                    # 2. Regra de adjacência de tetraminós do mesmo tipo
                     violates_adjacency = False
                     for r_cell, c_cell in abs_cells_to_fill:
                         for dr_adj, dc_adj in [(0,1), (0,-1), (1,0), (-1,0)]:
                             nr, nc = r_cell + dr_adj, c_cell + dc_adj
                             if 0 <= nr < board.N and 0 <= nc < board.N:
-                                neighbor_val = board.solution_grid[nr][nc]
+                                neighbor_val = board.solution_grid[nr][nc] # Usa a GRELHA ATUAL (solution_grid) do board
                                 neighbor_region_id = board.initial_grid_ids[nr][nc]
                                 if (neighbor_val in ALLOWED_TETROMINO_TYPES and
-                                    neighbor_region_id != region_to_fill_id and # Diferente região
+                                    neighbor_region_id != region_to_fill_id and
                                     board.assignments.get(neighbor_region_id, {}).get('type') == tetromino_type):
                                     violates_adjacency = True
                                     break
                         if violates_adjacency: break
-                    
                     if violates_adjacency:
                         continue
                     
-                    # 3. Regra de não formar 2x2 com esta nova peça E as já existentes
-                    # Esta verificação é mais complexa aqui, pois envolve verificar todos os possíveis 2x2
-                    # que esta nova peça poderia criar. Pode ser mais eficiente verificar no goal_test
-                    # ou após a colocação, mas para pruning, pode ser feita aqui (parcialmente).
-                    # Por agora, vamos deixar esta verificação mais pesada para o goal_test.
+                    # *** CHAMADA À NOVA FUNÇÃO AUXILIAR ***
+                    if _check_if_creates_2x2_block(self.N, currently_filled_cells, abs_cells_to_fill):
+                        continue # Podar esta ação, pois criaria um bloco 2x2
 
                     action = (region_to_fill_id, tetromino_type, abs_cells_to_fill)
                     possible_actions.append(action)
@@ -417,23 +483,30 @@ class Nuruomino(Problem):
            Estima o "custo" para alcançar o objetivo a partir do estado atual.
            Uma heurística simples é o número de regiões ainda não preenchidas.
         """
-        state = node.state # O estado é um NuruominoState
+        state = node.state
         board = state.board
         
-        # Número de regiões que ainda precisam de uma peça.
-        # Quanto menor, mais perto do objetivo (em termos de peças colocadas).
-        unassigned_regions = len(self.all_region_ids) - len(board.assignments)
-        return unassigned_regions
+        unassigned = len(self.all_region_ids) - len(board.assignments)
+        
+        # Adicional: Penalidade por "quase" blocos 2x2
+        # O peso C1 aqui é crucial para admissibilidade. Se C1=0, é a heurística original.
+        # Se cada "quase bloco" garantisse um movimento extra, C1=1 seria admissível.
+        # Como não é garantido, um C1 < 1 é mais seguro para admissibilidade,
+        # ou use 0 para começar e foque na poda de 'actions'.
+        C1 = 0.1 # Ou 0 para testar sem esta parte primeiro
+        penalty_almost_2x2 = C1 * board.count_almost_2x2_blocks_internal()
+        
+        return unassigned + penalty_almost_2x2
 
 
 
 
 if __name__ == '__main__':
     # Nomes dos ficheiros de input e output esperado
-    expected_output_filename = "test-01.out"
+    expected_output_filename = "test-03.out"
 
-    DEBUG_MODE = False
-    DEBUG_MODE_COMPARISON = False
+    DEBUG_MODE = True
+    DEBUG_MODE_COMPARISON = True
 
     def dprint(message):
         if DEBUG_MODE:
@@ -474,7 +547,7 @@ if __name__ == '__main__':
 
     # 4. Resolver o problema
     goal_node = None
-    dprint(f"\nA tentar resolver o problema com depth_first_tree_search...")
+    dprint(f"\nA tentar resolver o problema com astar_search...")
     try:
         goal_node = astar_search(nuruomino_problem)
     except Exception as e:
