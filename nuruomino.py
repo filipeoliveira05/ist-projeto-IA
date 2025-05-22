@@ -433,9 +433,14 @@ if __name__ == '__main__':
     expected_output_filename = "test-01.out"
 
     DEBUG_MODE = False
+    DEBUG_MODE_COMPARISON = False
 
     def dprint(message):
         if DEBUG_MODE:
+            print(message, file=sys.stderr)
+    
+    def dprint_c(message):
+        if DEBUG_MODE_COMPARISON:
             print(message, file=sys.stderr)
 
     dprint("--- NURUOMINO Solver ---")
@@ -471,7 +476,7 @@ if __name__ == '__main__':
     goal_node = None
     dprint(f"\nA tentar resolver o problema com depth_first_tree_search...")
     try:
-        goal_node = depth_first_tree_search(nuruomino_problem)
+        goal_node = astar_search(nuruomino_problem)
     except Exception as e:
         print(f"ERRO FATAL durante a procura: {e}", file=sys.stderr)
         sys.exit(1)
@@ -485,7 +490,7 @@ if __name__ == '__main__':
         print(my_solution_str)
 
         # --- Comparação com o ficheiro .out (para debug/teste local) ---
-        if DEBUG_MODE:
+        if DEBUG_MODE_COMPARISON:
             try:
                 with open(expected_output_filename, 'r') as f:
                     expected_solution_str = f.read().strip()
@@ -494,17 +499,17 @@ if __name__ == '__main__':
                 expected_solution_str_normalized = expected_solution_str.replace('\r\n', '\n').strip()
 
                 if my_solution_str_normalized == expected_solution_str_normalized:
-                    dprint(f"\nVERIFICAÇÃO: Output do programa CORRESPONDE ao ficheiro '{expected_output_filename}'. SUCESSO!")
+                    dprint_c(f"\nVERIFICAÇÃO: Output do programa CORRESPONDE ao ficheiro '{expected_output_filename}'. SUCESSO!")
                 else:
-                    dprint(f"\nVERIFICAÇÃO: Output do programa DIFERE do ficheiro '{expected_output_filename}'. FALHA!")
-                    dprint("--- Output Esperado ---")
-                    dprint(expected_solution_str_normalized)
-                    dprint("--- Output Obtido ---")
-                    dprint(my_solution_str_normalized)
+                    dprint_c(f"\nVERIFICAÇÃO: Output do programa DIFERE do ficheiro '{expected_output_filename}'. FALHA!")
+                    dprint_c("--- Output Esperado ---")
+                    dprint_c(expected_solution_str_normalized)
+                    dprint_c("--- Output Obtido ---")
+                    dprint_c(my_solution_str_normalized)
             except FileNotFoundError:
-                dprint(f"\nAVISO: Ficheiro de output esperado '{expected_output_filename}' não encontrado para verificação.")
+                dprint_c(f"\nAVISO: Ficheiro de output esperado '{expected_output_filename}' não encontrado para verificação.")
             except Exception as e:
-                dprint(f"\nERRO ao ler ou comparar com o ficheiro de output esperado: {e}")
+                dprint_c(f"\nERRO ao ler ou comparar com o ficheiro de output esperado: {e}")
 
     else:
         dprint("\nNenhuma solução encontrada pelo algoritmo de procura.")
