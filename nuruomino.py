@@ -211,7 +211,7 @@ class Board:
         """Imprime a grelha (solution_grid) no formato de output especificado."""
         output = ""
         for r in range(self.N):
-            output += " ".join(self.solution_grid[r]) + "\n"
+            output += "\t".join(self.solution_grid[r]) + "\n"
         return output.strip() # Remove a última nova linha
     
 
@@ -429,39 +429,85 @@ class Nuruomino(Problem):
 
 
 if __name__ == '__main__':
+    # Nomes dos ficheiros de input e output esperado
+    expected_output_filename = "test-01.out"
+
+    DEBUG_MODE = False
+
+    def dprint(message):
+        if DEBUG_MODE:
+            print(message, file=sys.stderr)
+
+    dprint("--- NURUOMINO Solver ---")
+    
     # 1. Gerar as variantes dos tetraminós
     try:
         generate_all_tetromino_variants()
+        dprint("Variantes de tetraminós geradas.")
     except Exception as e:
+        print(f"ERRO FATAL ao gerar variantes: {e}", file=sys.stderr)
         sys.exit(1)
 
     # 2. Ler a instância do problema
     initial_board_obj = None
     try:
+        dprint("A ler a instância do problema do standard input...")
         initial_board_obj = Board.parse_instance()
+        dprint(f"Instância lida: Grelha {initial_board_obj.N}x{initial_board_obj.N} com {len(initial_board_obj.regions_map)} regiões.")
     except Exception as e:
+        print(f"ERRO FATAL ao ler instância: {e}", file=sys.stderr)
         sys.exit(1)
 
     # 3. Criar a instância do problema Nuruomino
     nuruomino_problem = None
     try:
         nuruomino_problem = Nuruomino(initial_board_obj)
+        dprint("Instância do problema Nuruomino criada.")
     except Exception as e:
+        print(f"ERRO FATAL ao criar problema: {e}", file=sys.stderr)
         sys.exit(1)
 
     # 4. Resolver o problema
     goal_node = None
+    dprint(f"\nA tentar resolver o problema com depth_first_tree_search...")
     try:
-        # Pode mudar para astar_search(nuruomino_problem) se quiser testar
-        goal_node = astar_search(nuruomino_problem)
+        goal_node = depth_first_tree_search(nuruomino_problem)
     except Exception as e:
+        print(f"ERRO FATAL durante a procura: {e}", file=sys.stderr)
         sys.exit(1)
     
     # 5. Apresentar a solução
     if goal_node:
-        if nuruomino_problem.goal_test(goal_node.state):
-            print(goal_node.state.board.print_board())
-        else:
-            pass
+        dprint("\nSOLUÇÃO ENCONTRADA pelo algoritmo de procura!")
+        
+        my_solution_str = goal_node.state.board.print_board()
+
+        print(my_solution_str)
+
+        # --- Comparação com o ficheiro .out (para debug/teste local) ---
+        if DEBUG_MODE:
+            try:
+                with open(expected_output_filename, 'r') as f:
+                    expected_solution_str = f.read().strip()
+                
+                my_solution_str_normalized = my_solution_str.replace('\r\n', '\n').strip()
+                expected_solution_str_normalized = expected_solution_str.replace('\r\n', '\n').strip()
+
+                if my_solution_str_normalized == expected_solution_str_normalized:
+                    dprint(f"\nVERIFICAÇÃO: Output do programa CORRESPONDE ao ficheiro '{expected_output_filename}'. SUCESSO!")
+                else:
+                    dprint(f"\nVERIFICAÇÃO: Output do programa DIFERE do ficheiro '{expected_output_filename}'. FALHA!")
+                    dprint("--- Output Esperado ---")
+                    dprint(expected_solution_str_normalized)
+                    dprint("--- Output Obtido ---")
+                    dprint(my_solution_str_normalized)
+            except FileNotFoundError:
+                dprint(f"\nAVISO: Ficheiro de output esperado '{expected_output_filename}' não encontrado para verificação.")
+            except Exception as e:
+                dprint(f"\nERRO ao ler ou comparar com o ficheiro de output esperado: {e}")
+
     else:
-        pass
+        dprint("\nNenhuma solução encontrada pelo algoritmo de procura.")
+
+    if DEBUG_MODE:
+        dprint("\n--- Fim da Execução ---")
