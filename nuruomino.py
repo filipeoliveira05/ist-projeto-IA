@@ -9,7 +9,7 @@ from copy import deepcopy
 from collections import deque  # For BFS in connectivity check
 
 # Global debug flag - Set to False for production to suppress stderr output
-DEBUG_MODE = True
+DEBUG_MODE = False
 
 # --- Global Definitions ---
 TETROMINO_BASE_SHAPES = {
@@ -92,7 +92,8 @@ def generate_all_tetromino_variants():
             )
 
         TETROMINO_VARIANTS[name] = [list(variant) for variant in variants]
-        print(f"Generated {len(TETROMINO_VARIANTS[name])} variants for {name}")
+        if DEBUG_MODE:
+            print(f"Generated {len(TETROMINO_VARIANTS[name])} variants for {name}")
 
 
 def _check_if_creates_2x2_block(N, existing_filled_cells, new_cells_to_add):
@@ -609,7 +610,10 @@ class Nuruomino(Problem):
         return h_value
 
 
-def solve_nuruomino(expected_output_file=None):
+def solve_nuruomino():
+    DEBUG_MODE_COMPARISON = False
+    expected_output_file = "test01.out"
+    
     try:
         generate_all_tetromino_variants()
         if DEBUG_MODE:
@@ -627,43 +631,35 @@ def solve_nuruomino(expected_output_file=None):
             print("\nSolving with best-first graph search...", file=sys.stderr)
 
         goal_node = best_first_graph_search(
-            problem, lambda n: problem.h(n), display=True
+            problem, lambda n: problem.h(n), display=False
         )
 
-        solution_output = ""
         if goal_node:
             if DEBUG_MODE:
                 print("\nSolution found!", file=sys.stderr)
-            solution_output = goal_node.state.board.print_board()
-            print(solution_output)
+            solution_str = goal_node.state.board.print_board()
+            print(solution_str)
+
+            # --- Comparação com ficheiro esperado ---
+            if DEBUG_MODE_COMPARISON:
+                try:
+                    with open(expected_output_file, "r") as f:
+                        expected_str = f.read().strip()
+                    if solution_str.strip() == expected_str:
+                        print("\n[SUCCESS] Output igual ao ficheiro esperado!")
+                    else:
+                        print("\n[FAIL] Output diferente do ficheiro esperado!")
+                        print("----- Esperado -----")
+                        print(expected_str)
+                        print("----- Obtido -----")
+                        print(solution_str)
+                except Exception as e:
+                    print(f"[WARN] Não foi possível comparar com {expected_output_file}: {e}")
+
         else:
             if DEBUG_MODE:
                 print("\nNo solution found.", file=sys.stderr)
-            solution_output = "No solution."
-            print(solution_output)
-
-        if expected_output_file:
-            try:
-                with open(expected_output_file, "r") as f_out:
-                    expected_output = f_out.read().strip()
-
-                if solution_output == expected_output:
-                    print(
-                        f"\n--- Solution matches the expected output in '{expected_output_file}' ---"
-                    )
-                else:
-                    print(
-                        f"\n--- Solution DOES NOT match the expected output in '{expected_output_file}' ---"
-                    )
-                    print("\nYour Solution:")
-                    print(solution_output)
-                    print("\nExpected Solution:")
-                    print(expected_output)
-
-            except FileNotFoundError:
-                print(
-                    f"\n--- WARNING: Expected output file '{expected_output_file}' not found. ---"
-                )
+            print("No solution.")
 
     except Exception as e:
         print(f"Fatal error: {e}", file=sys.stderr)
@@ -674,8 +670,4 @@ def solve_nuruomino(expected_output_file=None):
 
 
 if __name__ == "__main__":
-    # To run with an expected output file for comparison, uncomment the line below
-    # and replace 'test-01.out' with the actual filename.
-    solve_nuruomino(expected_output_file="test15.out")
-    # To run without comparison, use:
-    # solve_nuruomino()
+    solve_nuruomino()
