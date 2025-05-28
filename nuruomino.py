@@ -1,591 +1,709 @@
-# nuruomino.py: Template para implementação do projeto de Inteligência Artificial 2024/2025.
-# Devem alterar as classes e funções neste ficheiro de acordo com as instruções do enunciado.
-# Além das funções e classes sugeridas, podem acrescentar outras que considerem pertinentes.
-
+# nuruomino.py: Projeto de Inteligência Artificial 2024/2025
 # Grupo 00:
 # 110633 Filipe Oliveira
 # 110720 Francisco Andrade
 
 import sys
-from search import Problem, Node, depth_first_tree_search, astar_search
+from search import Problem, Node, best_first_graph_search
 from copy import deepcopy
+from collections import deque  # For BFS in connectivity check
 
+# Global debug flag - Set to False for production to suppress stderr output
+DEBUG_MODE = False
 
-# --- Definições Globais e Constantes ---
+# --- Global Definitions ---
 TETROMINO_BASE_SHAPES = {
-    'L': frozenset([(0,0), (1,0), (2,0), (2,1)]),
-    'I': frozenset([(0,0), (1,0), (2,0), (3,0)]),
-    'T': frozenset([(0,0), (0,1), (0,2), (1,1)]),
-    'S': frozenset([(0,1), (1,1), (1,0), (2,0)])
+    "L": frozenset([(0, 0), (1, 0), (2, 0), (2, 1)]),  # 3x2 L-shape
+    "I": frozenset([(0, 0), (1, 0), (2, 0), (3, 0)]),  # 4x1 line
+    "T": frozenset([(0, 0), (0, 1), (0, 2), (1, 1)]),  # 2x3 T-shape
+    "S": frozenset(
+        [(0, 1), (1, 1), (1, 0), (2, 0)]
+    ),  # 3x2 S-shape (also Z-shape, depending on orientation)
 }
-ALLOWED_TETROMINO_TYPES = ['L', 'I', 'T', 'S']
-TETROMINO_VARIANTS = {}
+ALLOWED_TETROMINO_TYPES = ["L", "I", "T", "S"]
+TETROMINO_VARIANTS = {}  # Stores all rotated/reflected variants for each type
 
 
-# --- Funções de Manipulação de Tetraminós ---
+# --- Tetromino Manipulation Functions ---
 def _normalize_shape(shape_coords):
-    """Translada a peça para que a sua célula mais a cima e à esquerda esteja em (0,0)."""
-    if not shape_coords: return frozenset()
+    """
+    Normalizes a tetromino shape by shifting its cells so that the top-leftmost cell
+    (minimum row, then minimum column) is at (0,0).
+    Ensures consistent representation for shape comparison regardless of absolute position.
+    """
+    if not shape_coords:
+        return frozenset()
+
     min_r = min(r for r, c in shape_coords)
     min_c = min(c for r, c in shape_coords)
+
     return frozenset([(r - min_r, c - min_c) for r, c in shape_coords])
 
+
 def _rotate_shape_90_clockwise(shape_coords):
-    """Roda uma peça 90 graus no sentido horário em torno da origem (0,0) da peça, depois normaliza."""
-    # (r,c) -> (c, -r) para rotação horária.
-    # Depois normalizar para manter coordenadas positivas e relativas ao canto superior esquerdo.
-    if not shape_coords: return frozenset()
-    # max_r_before_rotation = max(r for r,c in shape_coords) # Para rotação em torno de um ponto diferente
-    # return _normalize_shape(frozenset([(c, max_r_before_rotation - r) for r, c in shape_coords]))
+    """
+    Rotates a shape 90 degrees clockwise around the origin (0,0).
+    (r, c) becomes (c, -r). Normalization is applied afterwards.
+    """
+    # Normalize after rotation to ensure consistency for comparison in the set
     return _normalize_shape(frozenset([(c, -r) for r, c in shape_coords]))
 
 
 def _reflect_shape_vertical_axis(shape_coords):
-    """Reflete uma peça em torno do eixo y (vertical) que passa pela "origem" da peça, depois normaliza."""
-    # (r,c) -> (r, -c) e depois normaliza
+    """
+    Reflects a shape across the vertical axis (c -> -c).
+    Normalization is applied afterwards.
+    """
+    # Normalize after reflection to ensure consistency for comparison in the set
     return _normalize_shape(frozenset([(r, -c) for r, c in shape_coords]))
 
+
 def generate_all_tetromino_variants():
-    """Preenche o dicionário global TETROMINO_VARIANTS com todas as orientações únicas."""
+    """
+    Generates and stores all unique rotation and reflection variants for each base tetromino.
+    Ensures all 8 (or fewer for symmetric shapes) possible orientations are captured.
+    """
     global TETROMINO_VARIANTS
-    if TETROMINO_VARIANTS: # Já gerado
+    if TETROMINO_VARIANTS:  # Only generate once
         return
 
     for name, base_shape in TETROMINO_BASE_SHAPES.items():
         variants = set()
-        current_shape_to_reflect = base_shape
-        for _ in range(2): # Original e refletido (se a reflexão gerar uma nova forma)
-            shape_to_rotate = current_shape_to_reflect
-            for _ in range(4): # 4 rotações
-                variants.add(shape_to_rotate)
-                shape_to_rotate = _rotate_shape_90_clockwise(shape_to_rotate)
-            # Prepara para a próxima iteração: reflete a forma base original
-            current_shape_to_reflect = _reflect_shape_vertical_axis(base_shape)
-            if current_shape_to_reflect == base_shape and name in ['I', 'S', 'T']: # Algumas peças não mudam com reflexão e rotação (ou S vira Z)
-                 # O S e Z são reflexos. T e I são simétricos em relação a um eixo após algumas rotações.
-                 # O objetivo é ter todas as 8 (ou menos) orientações distintas.
-                 pass
+
+        current_shape_for_rotation = base_shape
+
+        # Generate 4 rotations
+        for _ in range(4):
+            # Add the current rotated shape (already normalized from _rotate_shape_90_clockwise)
+            variants.add(current_shape_for_rotation)
+
+            # Reflect the *current* rotated shape and add its normalized version
+            reflected_version = _reflect_shape_vertical_axis(current_shape_for_rotation)
+            variants.add(reflected_version)
+
+            # Rotate for the next iteration (and normalize inside the function)
+            current_shape_for_rotation = _rotate_shape_90_clockwise(
+                current_shape_for_rotation
+            )
+
+        TETROMINO_VARIANTS[name] = [
+            list(variant) for variant in variants
+        ]  # Store as list of lists
+        if DEBUG_MODE:
+            print(
+                f"Generated {len(TETROMINO_VARIANTS[name])} variants for {name}",
+                file=sys.stderr,
+            )
 
 
-        TETROMINO_VARIANTS[name] = [list(variant) for variant in variants]
-
-
-def _check_if_creates_2x2_block(N_board_size, currently_filled_cells_set, new_piece_cells_set):
+def _check_if_creates_2x2_block(N, existing_filled_cells, new_cells_to_add):
     """
-    Verifica se a adição de 'new_piece_cells_set' a 'currently_filled_cells_set'
-    criaria algum bloco 2x2 preenchido.
-
-    Args:
-        N_board_size (int): A dimensão N da grelha.
-        currently_filled_cells_set (set): Conjunto de tuplos (r,c) das células já preenchidas no tabuleiro.
-        new_piece_cells_set (set): Conjunto de tuplos (r,c) das células da nova peça a ser colocada.
-
-    Returns:
-        bool: True se um bloco 2x2 for criado, False caso contrário.
+    Checks if adding 'new_cells_to_add' to 'existing_filled_cells' creates a 2x2 block.
+    N is the board size.
     """
-    # Considera o estado prospectivo do tabuleiro com a nova peça adicionada
-    prospective_all_filled = currently_filled_cells_set.union(new_piece_cells_set)
+    all_filled = existing_filled_cells | new_cells_to_add
 
-    # Só precisamos verificar os quadrados 2x2 que poderiam ser completados
-    # pela adição das new_piece_cells_set.
-    # Um quadrado 2x2 é definido pelo seu canto superior esquerdo (r_anchor, c_anchor).
-    # Iteramos por todas as células da nova peça. Cada uma delas pode fazer parte
-    # de até quatro quadrados 2x2 diferentes (como canto sup-esq, sup-dir, inf-esq, inf-dir).
-    
-    potential_2x2_top_left_anchors = set()
-    for r_new, c_new in new_piece_cells_set:
-        # Se (r_new, c_new) é o canto inferior direito de um 2x2, o canto superior esquerdo é (r_new-1, c_new-1)
-        potential_2x2_top_left_anchors.add((r_new - 1, c_new - 1))
-        # Se (r_new, c_new) é o canto inferior esquerdo de um 2x2, o canto superior esquerdo é (r_new-1, c_new)
-        potential_2x2_top_left_anchors.add((r_new - 1, c_new))
-        # Se (r_new, c_new) é o canto superior direito de um 2x2, o canto superior esquerdo é (r_new, c_new-1)
-        potential_2x2_top_left_anchors.add((r_new, c_new - 1))
-        # Se (r_new, c_new) é o canto superior esquerdo de um 2x2, o canto superior esquerdo é (r_new, c_new)
-        potential_2x2_top_left_anchors.add((r_new, c_new))
+    # Iterate only over possible top-left corners that include a newly added cell
+    # This optimization reduces checks significantly.
+    for r_new, c_new in new_cells_to_add:
+        # Check all 4 possible 2x2 block origins that involve (r_new, c_new)
+        # Block 1: (r_new, c_new) is top-left
+        if r_new + 1 < N and c_new + 1 < N:
+            if all(
+                (_r, _c) in all_filled
+                for _r, _c in [
+                    (r_new, c_new),
+                    (r_new + 1, c_new),
+                    (r_new, c_new + 1),
+                    (r_new + 1, c_new + 1),
+                ]
+            ):
+                return True
+        # Block 2: (r_new, c_new) is top-right
+        if r_new + 1 < N and c_new - 1 >= 0:
+            if all(
+                (_r, _c) in all_filled
+                for _r, _c in [
+                    (r_new, c_new - 1),
+                    (r_new + 1, c_new - 1),
+                    (r_new, c_new),
+                    (r_new + 1, c_new),
+                ]
+            ):
+                return True
+        # Block 3: (r_new, c_new) is bottom-left
+        if r_new - 1 >= 0 and c_new + 1 < N:
+            if all(
+                (_r, _c) in all_filled
+                for _r, _c in [
+                    (r_new - 1, c_new),
+                    (r_new, c_new),
+                    (r_new - 1, c_new + 1),
+                    (r_new, c_new + 1),
+                ]
+            ):
+                return True
+        # Block 4: (r_new, c_new) is bottom-right
+        if r_new - 1 >= 0 and c_new - 1 >= 0:
+            if all(
+                (_r, _c) in all_filled
+                for _r, _c in [
+                    (r_new - 1, c_new - 1),
+                    (r_new, c_new - 1),
+                    (r_new - 1, c_new),
+                    (r_new, c_new),
+                ]
+            ):
+                return True
+    return False
 
-    for r_anchor, c_anchor in potential_2x2_top_left_anchors:
-        # Verifica se este (r_anchor, c_anchor) é um canto superior esquerdo válido para um 2x2
-        if not (0 <= r_anchor < N_board_size - 1 and 0 <= c_anchor < N_board_size - 1):
-            continue # Fora dos limites para ser um canto superior esquerdo de um 2x2 completo na grelha
 
-        # Verifica se todas as 4 células deste bloco 2x2 estão em prospective_all_filled
-        is_block = True
-        for dr_block in [0, 1]:
-            for dc_block in [0, 1]:
-                if (r_anchor + dr_block, c_anchor + dc_block) not in prospective_all_filled:
-                    is_block = False
-                    break
-            if not is_block:
-                break
-        
-        if is_block:
-            return True # Encontrou um bloco 2x2 que seria criado
-
-    return False # Nenhum bloco 2x2 seria criado
-
-
+# --- Classes ---
 class NuruominoState:
-    state_id_counter = 0
+    """Represents a state in the Nuruomino problem."""
 
-    def __init__(self, board: 'Board'):
+    state_id_counter = (
+        0  # Unique ID for each state instance (useful for debugging and __lt__)
+    )
+
+    def __init__(self, board):
         self.board = board
         self.id = NuruominoState.state_id_counter
         NuruominoState.state_id_counter += 1
 
     def __lt__(self, other):
-        """ Este método é utilizado em caso de empate na gestão da lista
-        de abertos nas procuras informadas. """
+        # Used by PriorityQueue for tie-breaking when costs are equal
         return self.id < other.id
-    
+
     def __eq__(self, other):
-        if not isinstance(other, NuruominoState):
-            return NotImplemented
-        return self.board == other.board
-    
+        return isinstance(other, NuruominoState) and self.board == other.board
+
     def __hash__(self):
         return hash(self.board)
-    
 
 
 class Board:
-    """Representação interna de um tabuleiro do Puzzle Nuruomino."""
+    """Represents the Nuruomino game board, its regions, and current assignments."""
+
     def __init__(self, N, initial_grid_ids, regions_map, assignments=None):
         self.N = N
-        self.initial_grid_ids = initial_grid_ids # Grelha original com números de região (strings)
-        self.regions_map = regions_map # {'id_str': {'cells': set((r,c))}, ...}
-        
-        # assignments: {'region_id_str': {'type': 'L', 'abs_cells': frozenset((r,c))}}
-        self.assignments = assignments if assignments is not None else {}
+        self.initial_grid_ids = initial_grid_ids  # N x N list of strings (region IDs)
+        self.regions_map = (
+            regions_map  # Dict: region_id -> {cells: set, valid_placements: list}
+        )
+        self.assignments = (
+            assignments or {}
+        )  # Dict: region_id -> {type: str, abs_cells: frozenset}
 
-        # solution_grid é a grelha para output: L,I,T,S ou números de região originais
-        # Esta parte pode ser mais complexa e depender de outros métodos,
-        # mas para o parse_instance, o importante é armazenar os dados de entrada.
-        self.solution_grid = [row[:] for row in initial_grid_ids] # Inicializa com os IDs das regiões
-        
-        # Se houver assignments (não neste caso do parse_instance inicial), eles seriam aplicados aqui.
+        # The solution grid for printing (populated dynamically)
+        self.solution_grid = [row[:] for row in initial_grid_ids]
         for region_id, data in self.assignments.items():
-            tetromino_type = data['type']
-            for r_cell, c_cell in data['abs_cells']:
-                if 0 <= r_cell < self.N and 0 <= c_cell < self.N:
-                    self.solution_grid[r_cell][c_cell] = tetromino_type
-        
-
-    def get_value(self, row: int, col: int) -> str:
-        """Retorna o valor (char) preenchido numa determinada posição da solution_grid."""
-        if 0 <= row < self.N and 0 <= col < self.N:
-            return self.solution_grid[row][col]
-        raise IndexError("Posição fora da grelha")
-    
-
-    def get_region_cells(self, region_id: str) -> set:
-        """Retorna o conjunto de células (r,c) para uma dada região."""
-        return self.regions_map.get(region_id, {}).get('cells', set())
-
-
-    def adjacent_regions(self, region_id:str) -> list:
-        """Devolve uma lista das regiões que fazem fronteira com a região enviada no argumento."""
-        adj_regs = set()
-        region_cells = self.get_region_cells(region_id)
-        if not region_cells:
-            return []
-
-        for r, c in region_cells:
-            for dr, dc in [(0,1), (0,-1), (1,0), (-1,0)]: # Ortogonais
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < self.N and 0 <= nc < self.N:
-                    neighbor_region_id = self.initial_grid_ids[nr][nc]
-                    if neighbor_region_id != region_id: # Se pertence a outra região
-                        adj_regs.add(neighbor_region_id)
-        return sorted(list(adj_regs)) # Exemplo pede lista ordenada
-    
-    
-    def adjacent_positions(self, row:int, col:int) -> list:
-        """Devolve as posições adjacentes à região, em todas as direções, incluindo diagonais."""
-        adj_pos = []
-        deltas = [(-1,-1),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)]
-        for dr, dc in deltas:
-            nr, nc = row + dr, col + dc
-            if 0 <= nr < self.N and 0 <= nc < self.N:
-                adj_pos.append((nr, nc))
-        return adj_pos
-    
-
-    def adjacent_values(self, row:int, col:int) -> list:
-        """Devolve os valores das celulas adjacentes à região, em todas as direções, incluindo diagonais."""
-        values = []
-        for r_adj, c_adj in self.adjacent_positions(row, col):
-            values.append(self.get_value(r_adj, c_adj))
-        return values
-    
+            for r, c in data["abs_cells"]:
+                if 0 <= r < N and 0 <= c < N:
+                    self.solution_grid[r][c] = data["type"]  # Fill with tetromino type
 
     @staticmethod
     def parse_instance():
-        """Lê a instância do problema do standard input (stdin)
-        e retorna uma instância da classe Board.
-            
-            Por exemplo:
-            $ python3 pipe.py < test-01.txt
-            > from sys import stdin
-            > line = smtdin.readline().split()
-        """
-        input_lines_str = []
-        for line in sys.stdin:
-            stripped_line = line.strip()
-            if stripped_line: # Ignora linhas vazias
-                input_lines_str.append(stripped_line.split())
-        
-        if not input_lines_str:
-            raise ValueError("Input vazio ou inválido: nenhuma linha de dados encontrada.")
+        """Parses the Nuruomino puzzle input from stdin."""
+        lines = [line.strip().split() for line in sys.stdin if line.strip()]
+        if not lines:
+            raise ValueError("Empty input")
 
-        N = len(input_lines_str) # Número de linhas determina N
-        
-        # Verifica se todas as linhas têm N colunas
-        for r_idx, row_list in enumerate(input_lines_str):
-            if len(row_list) != N:
-                raise ValueError(f"Input inválido: linha {r_idx+1} tem {len(row_list)} colunas, esperado {N}.")
+        N = len(lines)
+        for i, row in enumerate(lines):
+            if len(row) != N:
+                raise ValueError(
+                    f"Invalid input: row {i+1} has {len(row)} columns, expected {N}"
+                )
 
-        initial_grid_ids = input_lines_str # Esta já é a nossa grelha de IDs
+        initial_grid_ids = lines  # Stores the original region IDs
 
-        regions_map = {} # Dicionário para mapear ID da região para as suas células
-                         # Formato: {'region_id_str': {'cells': set_of_coords (r,c)}}
-        
+        regions_map = {}
         for r in range(N):
             for c in range(N):
-                region_id = initial_grid_ids[r][c]
-                if region_id not in regions_map:
-                    regions_map[region_id] = {'cells': set()}
-                regions_map[region_id]['cells'].add((r, c))
-        
-        # Neste ponto, N, initial_grid_ids, e regions_map estão prontos.
-        # assignments será um dicionário vazio para uma instância recém-parseada.
-        return Board(N, initial_grid_ids, regions_map, {})    
+                rid = initial_grid_ids[r][c]
+                if rid not in regions_map:
+                    regions_map[rid] = {"cells": set(), "valid_placements": []}
+                regions_map[rid]["cells"].add((r, c))
 
-    
+        # Ensure variants are generated before calculating placements
+        generate_all_tetromino_variants()
+
+        # Pre-calculate all valid placements for each region
+        for rid, data in regions_map.items():
+            cells = data["cells"]  # set of (r,c) cells for this region
+
+            valid_placements = set()  # Use a set to avoid duplicates
+
+            # Iterate through all allowed tetromino types
+            for tet_type in ALLOWED_TETROMINO_TYPES:
+                # For each type, iterate through all its generated variants (rotations/reflections)
+                for variant_coords_list in TETROMINO_VARIANTS[
+                    tet_type
+                ]:  # variant_coords_list is a list of (r,c) tuples
+                    variant_coords_frozen = frozenset(
+                        variant_coords_list
+                    )  # Use frozenset for consistent hashing/comparison
+
+                    # For each cell in the current 'variant_coords_frozen' tetromino shape,
+                    # try to align it with every cell in the current 'region_cells'.
+                    for (
+                        vr_anchor,
+                        vc_anchor,
+                    ) in variant_coords_frozen:  # A cell from the tetromino variant
+                        for (
+                            r_region_cell,
+                            c_region_cell,
+                        ) in cells:  # A cell from the board region
+
+                            # Calculate the offset needed to move the 'vr_anchor, vc_anchor' of the variant
+                            # to the 'r_region_cell, c_region_cell' of the board.
+                            offset_r = r_region_cell - vr_anchor
+                            offset_c = c_region_cell - vc_anchor
+
+                            # Calculate the absolute coordinates of all cells of this variant, shifted by the offset
+                            current_placement_abs_cells = frozenset(
+                                [
+                                    (vr + offset_r, vc + offset_c)
+                                    for vr, vc in variant_coords_frozen
+                                ]
+                            )
+
+                            # Check if all cells of this shifted variant are contained within the current region
+                            if current_placement_abs_cells.issubset(cells):
+                                # It's a valid placement if it fits perfectly
+                                if len(current_placement_abs_cells) == 4:
+                                    valid_placements.add(
+                                        (tet_type, current_placement_abs_cells)
+                                    )
+
+            data["valid_placements"] = list(
+                valid_placements
+            )  # Convert back to list for consistency
+            if DEBUG_MODE:
+                print(
+                    f"Region {rid}: {len(data['valid_placements'])} valid tetromino placements (pre-calculated)",
+                    file=sys.stderr,
+                )
+            if not data["valid_placements"]:
+                print(
+                    f"WARNING: Region {rid} has no valid placements possible! This puzzle is likely unsolvable.",
+                    file=sys.stderr,
+                )
+
+        return Board(N, initial_grid_ids, regions_map, {})
+
     def print_board(self):
         """Imprime a grelha (solution_grid) no formato de output especificado."""
         output = ""
         for r in range(self.N):
             output += "\t".join(self.solution_grid[r]) + "\n"
-        return output.strip() # Remove a última nova linha
-    
+        return output.strip()  # Remove a última nova linha
 
     def __eq__(self, other):
-        if not isinstance(other, Board): return NotImplemented
-        # Compara N, grelha inicial e assignments (que determinam a solution_grid)
-        return (self.N == other.N and
-                self.initial_grid_ids == other.initial_grid_ids and # Grelhas são listas de listas
-                self.assignments == other.assignments)
-    
+        if not isinstance(other, Board):
+            return False
+        # Only compare assignments for state equality. N and initial_grid_ids are static for a problem.
+        return self.assignments == other.assignments
 
     def __hash__(self):
-        # Para que Board possa ser usado em sets (e.g., closed list em graph search)
-        # É crucial que os assignments sejam representados de forma canónica (ordenada)
-        frozen_assignments = []
-        for region_id, data in sorted(self.assignments.items()): # Ordenar por region_id
-            # As células (abs_cells) já são um frozenset, que é hasheável.
-            # Tipo também é hasheável.
-            frozen_data_tuple = (data['type'], data['abs_cells'])
-            frozen_assignments.append((region_id, frozen_data_tuple))
-            
-        # initial_grid_ids é list of lists of strings. Precisa ser tupla de tuplas.
-        grid_tuple = tuple(map(tuple, self.initial_grid_ids))
-        
-        return hash((self.N, grid_tuple, tuple(frozen_assignments)))
-
+        # Hash based on the current assignments to ensure unique states
+        assignments_tuple = tuple(
+            (rid, data["type"], data["abs_cells"])
+            for rid, data in sorted(self.assignments.items())
+        )
+        # Include N and initial_grid_ids for a full problem hash, though not strictly needed for state comparison
+        grid_tuple = tuple(tuple(row) for row in self.initial_grid_ids)
+        return hash((self.N, grid_tuple, assignments_tuple))
 
     def count_almost_2x2_blocks_internal(self):
-        """
-        Conta quantos blocos 2x2 na grelha têm exatamente 3 das suas 4 células
-        preenchidas pelas peças nos assignments DESTE tabuleiro.
-        """
+        """Counts 3-cell almost-2x2 blocks within the current filled cells."""
+        filled = set()
+        for data in self.assignments.values():
+            filled.update(data["abs_cells"])
+
         count = 0
-        all_filled_cells = set()
-        for data in self.assignments.values(): # Acessa self.assignments
-            all_filled_cells.update(data['abs_cells'])
-
-        if not all_filled_cells: 
-            return 0
-
-        for r in range(self.N - 1): # Acessa self.N
+        # Iterate only over possible top-left corners of 2x2 blocks
+        for r in range(self.N - 1):
             for c in range(self.N - 1):
-                filled_in_block = 0
-                cells_in_block = [
-                    (r, c), (r + 1, c),
-                    (r, c + 1), (r + 1, c + 1)
-                ]
-                for cell_coord in cells_in_block:
-                    if cell_coord in all_filled_cells:
-                        filled_in_block += 1
-                
-                if filled_in_block == 3:
+                block_cells = [(r, c), (r + 1, c), (r, c + 1), (r + 1, c + 1)]
+                filled_in_block = sum(1 for cell in block_cells if cell in filled)
+                if filled_in_block == 3:  # Check for 3 cells
                     count += 1
         return count
-    
-    # TODO: outros metodos da classe Board
 
-
-
+    def get_filled_cells(self):
+        """Returns a set of all currently filled cells on the board."""
+        filled_cells = set()
+        for data in self.assignments.values():
+            filled_cells.update(data["abs_cells"])
+        return filled_cells
 
 
 class Nuruomino(Problem):
-    def __init__(self, initial_board: Board):
-        """O construtor especifica o estado inicial."""
-        # Chama o construtor da superclasse (Problem)
+    """
+    Represents the Nuruomino puzzle as a search problem.
+    Uses Best-First Graph Search with a heuristic.
+    """
+
+    def __init__(self, initial_board):
         super().__init__(NuruominoState(initial_board))
-        
-        # Pré-processamento útil:
-        self.all_region_ids = sorted(list(initial_board.regions_map.keys()))
+        self.all_region_ids = sorted(initial_board.regions_map.keys())
         self.N = initial_board.N
-        
-        # Gera as variantes de tetraminós uma vez, se ainda não foram geradas
-        if not TETROMINO_VARIANTS:
-            generate_all_tetromino_variants()
 
-
-    def actions(self, state: NuruominoState):
-        board = state.board
-        region_to_fill_id = None
-        for r_id in self.all_region_ids:
-            if r_id not in board.assignments:
-                region_to_fill_id = r_id
-                break
-        if region_to_fill_id is None: return []
-
-        possible_actions = []
-        region_cells_set = board.get_region_cells(region_to_fill_id)
-
-        # Obter as células já preenchidas no tabuleiro ANTES desta ação
-        # (para a verificação de 2x2)
-        currently_filled_cells = set()
-        for data in board.assignments.values():
-            currently_filled_cells.update(data['abs_cells'])
-
-        for tetromino_type in ALLOWED_TETROMINO_TYPES:
-            if tetromino_type not in TETROMINO_VARIANTS: continue
-            for variant_rel_coords_list in TETROMINO_VARIANTS[tetromino_type]:
-                variant_rel_coords = frozenset(variant_rel_coords_list)
-                for anchor_r, anchor_c in region_cells_set:
-                    abs_cells_to_fill = frozenset(
-                        (r_rel + anchor_r, c_rel + anchor_c)
-                        for r_rel, c_rel in variant_rel_coords
-                    )
-                    
-                    if not abs_cells_to_fill.issubset(region_cells_set):
-                        continue
-
-                    violates_adjacency = False
-                    for r_cell, c_cell in abs_cells_to_fill:
-                        for dr_adj, dc_adj in [(0,1), (0,-1), (1,0), (-1,0)]:
-                            nr, nc = r_cell + dr_adj, c_cell + dc_adj
-                            if 0 <= nr < board.N and 0 <= nc < board.N:
-                                neighbor_val = board.solution_grid[nr][nc] # Usa a GRELHA ATUAL (solution_grid) do board
-                                neighbor_region_id = board.initial_grid_ids[nr][nc]
-                                if (neighbor_val in ALLOWED_TETROMINO_TYPES and
-                                    neighbor_region_id != region_to_fill_id and
-                                    board.assignments.get(neighbor_region_id, {}).get('type') == tetromino_type):
-                                    violates_adjacency = True
-                                    break
-                        if violates_adjacency: break
-                    if violates_adjacency:
-                        continue
-                    
-                    # *** CHAMADA À NOVA FUNÇÃO AUXILIAR ***
-                    if _check_if_creates_2x2_block(self.N, currently_filled_cells, abs_cells_to_fill):
-                        continue # Podar esta ação, pois criaria um bloco 2x2
-
-                    action = (region_to_fill_id, tetromino_type, abs_cells_to_fill)
-                    possible_actions.append(action)
-        
-        return possible_actions
-
-
-    def result(self, state: NuruominoState, action):
-        """Retorna o estado resultante de executar a 'action' sobre
-        'state' passado como argumento. A ação a executar deve ser uma
-        das presentes na lista obtida pela execução de
-        self.actions(state).
-        A ação é (region_id, tetromino_type, frozenset_of_absolute_cells).
+    def actions(self, state):
         """
-        region_id, tetromino_type, abs_cells = action
-        
-        # Cria uma cópia profunda dos assignments atuais para não modificar o estado original
-        new_assignments = deepcopy(state.board.assignments)
-        new_assignments[region_id] = {'type': tetromino_type, 'abs_cells': abs_cells}
-        
-        # Cria um novo Board com os assignments atualizados.
-        # O __init__ do Board irá reconstruir a solution_grid com base nos novos assignments.
-        new_board = Board(state.board.N, state.board.initial_grid_ids, 
-                          state.board.regions_map, new_assignments)
-        
-        return NuruominoState(new_board)
-        
+        Generates valid actions (placing a tetromino) from the current state.
+        Actions are (region_id, tet_type, abs_cells).
+        Uses MRV (Minimum Remaining Values) heuristic to select which region to assign next.
+        """
+        board = state.board
+        current_filled_cells = board.get_filled_cells()
 
-    def goal_test(self, state: NuruominoState):
-        """Retorna True se e só se o estado passado como argumento é
-        um estado objetivo. Deve verificar se todas as posições do tabuleiro
-        estão preenchidas de acordo com as regras do problema."""
-   
+        # --- Pruning 1: Check if the current board state already has an invalid 2x2 block ---
+        if _check_if_creates_2x2_block(self.N, current_filled_cells, frozenset()):
+            if DEBUG_MODE:
+                print(
+                    f"PRUNED STATE (2x2 violation): State {state.id} already contains an invalid 2x2 block.",
+                    file=sys.stderr,
+                )
+            return []  # No actions possible from an invalid state
+
+        actions = []
+        unassigned_regions_info = []
+
+        for rid in self.all_region_ids:
+            if rid not in board.assignments:  # Process only unassigned regions
+                num_valid_placements_for_rid = 0
+                if DEBUG_MODE:
+                    print(
+                        f"Checking valid placements for region {rid}...",
+                        file=sys.stderr,
+                    )
+                for tet_type_candidate, abs_cells_candidate in board.regions_map[rid][
+                    "valid_placements"
+                ]:
+                    if DEBUG_MODE:
+                        print(
+                            f"  Trying {tet_type_candidate} at {sorted(list(abs_cells_candidate))}",
+                            file=sys.stderr,
+                        )
+                    # 1. Adjacency with current assignments
+                    violates_adj = False
+                    for r, c in abs_cells_candidate:
+                        for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                            nr, nc = r + dr, c + dc
+                            if 0 <= nr < self.N and 0 <= nc < self.N:
+                                n_rid = board.initial_grid_ids[nr][nc]
+                                if (
+                                    n_rid in board.assignments and n_rid != rid
+                                ):  # Neighbor is an already assigned *different* region
+                                    neighbor_type = board.assignments[n_rid]["type"]
+                                    if neighbor_type == tet_type_candidate:
+                                        violates_adj = True
+                                        if DEBUG_MODE:
+                                            print(
+                                                f"    Violates adjacency with region {n_rid} of type {neighbor_type}",
+                                                file=sys.stderr,
+                                            )
+                                        break
+                        if violates_adj:
+                            break
+                    if violates_adj:
+                        continue
+
+                    # 2. 2x2 block creation with current filled cells
+                    if _check_if_creates_2x2_block(
+                        self.N, current_filled_cells, abs_cells_candidate
+                    ):
+                        if DEBUG_MODE:
+                            print("    Creates a 2x2 block", file=sys.stderr)
+                        continue
+
+                    num_valid_placements_for_rid += 1
+                    if DEBUG_MODE:
+                        print("    Valid placement!", file=sys.stderr)
+
+                if DEBUG_MODE:
+                    print(
+                        f"Region {rid} has {num_valid_placements_for_rid} valid placements in the current state.",
+                        file=sys.stderr,
+                    )
+
+                # Removing the immediate unfillable region pruning:
+                # if num_valid_placements_for_rid == 0:
+                #     if DEBUG_MODE:
+                #         print(
+                #             f"PRUNED PATH (unfillable region {rid}): State {state.id} leads to unfillable region {rid}.",
+                #             file=sys.stderr,
+                #         )
+                #     return []  # This state is a dead end
+
+                unassigned_regions_info.append((num_valid_placements_for_rid, rid))
+
+        if not unassigned_regions_info:  # All regions assigned, no actions possible
+            return []
+
+        # Sort by number of valid placements (MRV). Pick the region with fewest options.
+        unassigned_regions_info.sort()
+        target_region_id = unassigned_regions_info[0][1]
+        if DEBUG_MODE:
+            print(f"Selected target region: {target_region_id} (MRV)", file=sys.stderr)
+
+        filtered_candidate_placements = []
+        for tet_type, abs_cells in board.regions_map[target_region_id][
+            "valid_placements"
+        ]:
+            # Re-check validity for the target region based on the current state
+
+            # Adjacency with currently assigned pieces
+            violates_adjacency_target = False
+            for r, c in abs_cells:
+                for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < self.N and 0 <= nc < self.N:
+                        n_rid = board.initial_grid_ids[nr][nc]
+                        if n_rid in board.assignments and n_rid != target_region_id:
+                            neighbor_type = board.assignments[n_rid]["type"]
+                            if neighbor_type == tet_type:
+                                violates_adjacency_target = True
+                                break
+                    if violates_adjacency_target:
+                        break
+                if violates_adjacency_target:
+                    continue
+
+            # 2x2 block creation
+            if _check_if_creates_2x2_block(self.N, current_filled_cells, abs_cells):
+                continue
+
+            filtered_candidate_placements.append((tet_type, abs_cells))
+
+        if DEBUG_MODE and not filtered_candidate_placements:
+            print(
+                f"DEBUG: No valid filtered placements for target region {target_region_id}.",
+                file=sys.stderr,
+            )
+
+        for tet_type, abs_cells in filtered_candidate_placements:
+            actions.append((target_region_id, tet_type, abs_cells))
+
+        if DEBUG_MODE:
+            print(
+                f"Generated {len(actions)} actions for state {state.id} (target region {target_region_id})",
+                file=sys.stderr,
+            )
+        return actions
+
+    def result(self, state, action):
+        """Returns the new state after applying an action."""
+        region_id, tet_type, abs_cells = action
+        new_assignments = deepcopy(
+            state.board.assignments
+        )  # Deep copy to avoid modifying original state
+        new_assignments[region_id] = {"type": tet_type, "abs_cells": abs_cells}
+
+        # Create a new Board instance with the updated assignments
+        new_board = Board(
+            state.board.N,
+            state.board.initial_grid_ids,  # Pass initial_grid_ids to new Board
+            state.board.regions_map,  # regions_map is immutable, can be shared
+            new_assignments,
+        )
+        return NuruominoState(new_board)
+
+    def goal_test(self, state):
+        """Checks if the current state is a goal state."""
         board = state.board
 
-        # 1. Todas as regiões devem estar preenchidas
+        # 1. All regions must be assigned
         if len(board.assignments) != len(self.all_region_ids):
             return False
 
-        # Se chegou aqui, todas as regiões têm uma peça atribuída.
-        # Agora, verificar as regras globais do Nuruomino:
-        
-        all_filled_cells = set()
-        for region_data in board.assignments.values():
-            all_filled_cells.update(region_data['abs_cells'])
+        # 2. No 2x2 blocks of filled cells
+        filled_cells = board.get_filled_cells()
+        if _check_if_creates_2x2_block(
+            self.N, filled_cells, frozenset()
+        ):  # Check existing blocks without adding new_cells
+            if DEBUG_MODE:
+                print("Goal test failed: 2x2 block found.", file=sys.stderr)
+            return False
 
-        if not all_filled_cells: # Se não há células preenchidas (e.g. 0 regiões)
-             return len(self.all_region_ids) == 0 # É um goal se não havia regiões para preencher
+        # 3. All shaded cells must be connected
+        if (
+            not filled_cells
+        ):  # If no cells are filled (empty board, 0 regions), it's connected IF there are no regions
+            return True if len(self.all_region_ids) == 0 else False
 
+        # Perform a BFS/DFS to check 4-connectivity of filled cells
+        start_cell = next(iter(filled_cells))  # Pick an arbitrary starting cell
+        visited = set()
+        queue = deque([start_cell])  # Use deque for BFS
 
-        # 2. Conectividade de todas as células preenchidas (formar um único poliminó)
-        q = [next(iter(all_filled_cells))] # Pega uma célula preenchida qualquer para iniciar BFS/DFS
-        visited_connected = set()
-        head = 0
-        while head < len(q):
-            r, c = q[head]
-            head += 1
-            if (r,c) in visited_connected:
+        while queue:
+            r, c = queue.popleft()  # Pop from left for BFS
+            if (r, c) in visited:
                 continue
-            visited_connected.add((r,c))
+            visited.add((r, c))
 
-            for dr, dc in [(0,1), (0,-1), (1,0), (-1,0)]:
+            for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:  # 4-connectivity
                 nr, nc = r + dr, c + dc
-                if (nr, nc) in all_filled_cells and (nr, nc) not in visited_connected:
-                    q.append((nr, nc))
-        
-        if len(visited_connected) != len(all_filled_cells):
-            return False # Nem todas as células preenchidas estão conectadas
+                if (nr, nc) in filled_cells and (nr, nc) not in visited:
+                    queue.append((nr, nc))
 
-        # 3. Não pode haver áreas 2x2 de células preenchidas
-        for r in range(self.N - 1):
-            for c in range(self.N - 1):
-                is_2x2_filled = True
-                for dr_block in [0, 1]:
-                    for dc_block in [0, 1]:
-                        if (r + dr_block, c + dc_block) not in all_filled_cells:
-                            is_2x2_filled = False
-                            break
-                    if not is_2x2_filled: break
-                if is_2x2_filled:
-                    return False # Encontrou um bloco 2x2 preenchido
-        
-        # Se passou por todas as verificações, é um estado objetivo
-        return True
+        if len(visited) != len(filled_cells):
+            if DEBUG_MODE:
+                print(
+                    f"Goal test failed: shaded cells not connected. Visited {len(visited)} of {len(filled_cells)}.",
+                    file=sys.stderr,
+                )
+            return False
 
+        return True  # All conditions met
 
-    def h(self, node: Node):
-        """Função heuristica utilizada para a procura A*.
-           Estima o "custo" para alcançar o objetivo a partir do estado atual.
-           Uma heurística simples é o número de regiões ainda não preenchidas.
+    def h(self, node):
         """
-        state = node.state
-        board = state.board
-        
-        unassigned = len(self.all_region_ids) - len(board.assignments)
-        
-        # Adicional: Penalidade por "quase" blocos 2x2
-        # O peso C1 aqui é crucial para admissibilidade. Se C1=0, é a heurística original.
-        # Se cada "quase bloco" garantisse um movimento extra, C1=1 seria admissível.
-        # Como não é garantido, um C1 < 1 é mais seguro para admissibilidade,
-        # ou use 0 para começar e foque na poda de 'actions'.
-        C1 = 0.1 # Ou 0 para testar sem esta parte primeiro
-        penalty_almost_2x2 = C1 * board.count_almost_2x2_blocks_internal()
-        
-        return unassigned + penalty_almost_2x2
+        Heuristic function for the Nuruomino problem.
+        Estimates the cost from the current state to the goal.
+        This heuristic aims to be admissible or at least highly informative for best-first search.
+        """
+        board = node.state.board
 
+        # H1: Number of unassigned regions (admissible, counts remaining tasks)
+        unassigned_regions = [
+            rid for rid in self.all_region_ids if rid not in board.assignments
+        ]
+        h_unassigned = len(unassigned_regions)
 
+        # If all regions are assigned, and goal_test might pass, heuristic cost is 0
+        if h_unassigned == 0:
+            return 0
 
+        # H2: Check for immediate unfillable regions (returning a large finite number instead of infinity)
+        current_filled_cells = board.get_filled_cells()
+        for rid in unassigned_regions:
+            has_valid_placement_found_in_h = False
+            for tet_type_candidate, abs_cells_candidate in board.regions_map[rid][
+                "valid_placements"
+            ]:
+                # 1. Adjacency with current assignments
+                violates_adj = False
+                for r, c in abs_cells_candidate:
+                    for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                        nr, nc = r + dr, c + dc
+                        if 0 <= nr < self.N and 0 <= nc < self.N:
+                            n_rid = board.initial_grid_ids[nr][nc]
+                            if n_rid in board.assignments and n_rid != rid:
+                                neighbor_type = board.assignments[n_rid]["type"]
+                                if neighbor_type == tet_type_candidate:
+                                    violates_adj = True
+                                    break
+                    if violates_adj:
+                        break
+                if violates_adj:
+                    continue
 
-if __name__ == '__main__':
-    # Nomes dos ficheiros de input e output esperado
-    expected_output_filename = "test-03.out"
+                # 2. 2x2 block creation
+                if _check_if_creates_2x2_block(
+                    self.N, current_filled_cells, abs_cells_candidate
+                ):
+                    continue
 
-    DEBUG_MODE = True
-    DEBUG_MODE_COMPARISON = True
+                has_valid_placement_found_in_h = True
+                break
 
-    def dprint(message):
+            if not has_valid_placement_found_in_h:
+                if DEBUG_MODE:
+                    print(
+                        f"HEURISTIC WARNING: Region {rid} has 0 valid placements!",
+                        file=sys.stderr,
+                    )
+                return float(
+                    len(self.all_region_ids) * 100
+                )  # Return a large finite number
+
+        # H3: Connectivity Heuristic (number of disjoint shaded components)
+        h_connectivity = 0
+        filled_cells = current_filled_cells
+        if filled_cells:
+            num_components = 0
+            visited_connectivity = set()
+
+            for r_start, c_start in filled_cells:
+                if (r_start, c_start) not in visited_connectivity:
+                    num_components += 1
+                    q_bfs = deque([(r_start, c_start)])
+                    visited_connectivity.add((r_start, c_start))
+
+                    while q_bfs:
+                        r, c = q_bfs.popleft()
+                        for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                            nr, nc = r + dr, c + dc
+                            if (nr, nc) in filled_cells and (
+                                nr,
+                                nc,
+                            ) not in visited_connectivity:
+                                visited_connectivity.add((nr, nc))
+                                q_bfs.append((nr, nc))
+
+            if num_components > 1:
+                h_connectivity = num_components - 1
+
+        h_value = h_unassigned + h_connectivity
+
         if DEBUG_MODE:
-            print(message, file=sys.stderr)
-    
-    def dprint_c(message):
-        if DEBUG_MODE_COMPARISON:
-            print(message, file=sys.stderr)
+            print(
+                f"Heuristic for state {node.state.id}: unassigned={h_unassigned}, connectivity={h_connectivity}, total={h_value}",
+                file=sys.stderr,
+            )
+        return h_value
 
-    dprint("--- NURUOMINO Solver ---")
-    
-    # 1. Gerar as variantes dos tetraminós
+
+def solve_nuruomino():
+    # Keep expected_output_file for local testing, remove for submission
+    # expected_output_file = "test-03.out"
     try:
         generate_all_tetromino_variants()
-        dprint("Variantes de tetraminós geradas.")
+        if DEBUG_MODE:
+            print("Tetromino variants generated.", file=sys.stderr)
+
+        board = (
+            Board.parse_instance()
+        )  # This calls generate_all_tetromino_variants internally now
+        if DEBUG_MODE:
+            print(
+                f"Input parsed: {board.N}x{board.N} grid, {len(board.regions_map)} regions.",
+                file=sys.stderr,
+            )
+        problem = Nuruomino(board)
+        if DEBUG_MODE:
+            print("Nuruomino problem created.", file=sys.stderr)
+            print("\nSolving with best-first graph search...", file=sys.stderr)
+
+        # Pass the heuristic function (h) to best_first_graph_search
+        goal_node = best_first_graph_search(
+            problem, lambda n: problem.h(n), display=False
+        )
+
+        if goal_node:
+            if DEBUG_MODE:
+                print("\nSolution found!", file=sys.stderr)
+            print(goal_node.state.board.print_board())
+
+            # Removed file comparison logic as it's for local testing
+
+        else:
+            if DEBUG_MODE:
+                print("\nNo solution found.", file=sys.stderr)
+            print("No solution.")
+
     except Exception as e:
-        print(f"ERRO FATAL ao gerar variantes: {e}", file=sys.stderr)
+        print(f"Fatal error: {e}", file=sys.stderr)
         sys.exit(1)
-
-    # 2. Ler a instância do problema
-    initial_board_obj = None
-    try:
-        dprint("A ler a instância do problema do standard input...")
-        initial_board_obj = Board.parse_instance()
-        dprint(f"Instância lida: Grelha {initial_board_obj.N}x{initial_board_obj.N} com {len(initial_board_obj.regions_map)} regiões.")
-    except Exception as e:
-        print(f"ERRO FATAL ao ler instância: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    # 3. Criar a instância do problema Nuruomino
-    nuruomino_problem = None
-    try:
-        nuruomino_problem = Nuruomino(initial_board_obj)
-        dprint("Instância do problema Nuruomino criada.")
-    except Exception as e:
-        print(f"ERRO FATAL ao criar problema: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    # 4. Resolver o problema
-    goal_node = None
-    dprint(f"\nA tentar resolver o problema com astar_search...")
-    try:
-        goal_node = astar_search(nuruomino_problem)
-    except Exception as e:
-        print(f"ERRO FATAL durante a procura: {e}", file=sys.stderr)
-        sys.exit(1)
-    
-    # 5. Apresentar a solução
-    if goal_node:
-        dprint("\nSOLUÇÃO ENCONTRADA pelo algoritmo de procura!")
-        
-        my_solution_str = goal_node.state.board.print_board()
-
-        print(my_solution_str)
-
-        # --- Comparação com o ficheiro .out (para debug/teste local) ---
-        if DEBUG_MODE_COMPARISON:
-            try:
-                with open(expected_output_filename, 'r') as f:
-                    expected_solution_str = f.read().strip()
-                
-                my_solution_str_normalized = my_solution_str.replace('\r\n', '\n').strip()
-                expected_solution_str_normalized = expected_solution_str.replace('\r\n', '\n').strip()
-
-                if my_solution_str_normalized == expected_solution_str_normalized:
-                    dprint_c(f"\nVERIFICAÇÃO: Output do programa CORRESPONDE ao ficheiro '{expected_output_filename}'. SUCESSO!")
-                else:
-                    dprint_c(f"\nVERIFICAÇÃO: Output do programa DIFERE do ficheiro '{expected_output_filename}'. FALHA!")
-                    dprint_c("--- Output Esperado ---")
-                    dprint_c(expected_solution_str_normalized)
-                    dprint_c("--- Output Obtido ---")
-                    dprint_c(my_solution_str_normalized)
-            except FileNotFoundError:
-                dprint_c(f"\nAVISO: Ficheiro de output esperado '{expected_output_filename}' não encontrado para verificação.")
-            except Exception as e:
-                dprint_c(f"\nERRO ao ler ou comparar com o ficheiro de output esperado: {e}")
-
-    else:
-        dprint("\nNenhuma solução encontrada pelo algoritmo de procura.")
 
     if DEBUG_MODE:
-        dprint("\n--- Fim da Execução ---")
+        print("\n--- End of Execution ---", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    solve_nuruomino()
