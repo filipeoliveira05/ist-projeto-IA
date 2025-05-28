@@ -59,41 +59,41 @@ def _reflect_shape_vertical_axis(shape_coords):
 
 
 def generate_all_tetromino_variants():
-    """
-    Generates and stores all unique rotation and reflection variants for each base tetromino.
-    Ensures all 8 (or fewer for symmetric shapes) possible orientations are captured.
-    """
     global TETROMINO_VARIANTS
-    if TETROMINO_VARIANTS:  # Only generate once
+    if TETROMINO_VARIANTS:
         return
 
     for name, base_shape in TETROMINO_BASE_SHAPES.items():
         variants = set()
-
         current_shape_for_rotation = base_shape
 
-        # Generate 4 rotations
-        for _ in range(4):
-            # Add the current rotated shape (already normalized from _rotate_shape_90_clockwise)
-            variants.add(current_shape_for_rotation)
+        for i in range(4):
+            normalized_rotated = _normalize_shape(current_shape_for_rotation)
+            variants.add(normalized_rotated)
+            reflected = _reflect_shape_vertical_axis(current_shape_for_rotation)
+            variants.add(_normalize_shape(reflected))
 
-            # Reflect the *current* rotated shape and add its normalized version
-            reflected_version = _reflect_shape_vertical_axis(current_shape_for_rotation)
-            variants.add(reflected_version)
+            if DEBUG_MODE:
+                print(
+                    f"Generated (rotation {i}, {name}): {sorted(list(normalized_rotated))}"
+                )
+                print(
+                    f"Generated (reflection of rotation {i}, {name}): {sorted(list(_normalize_shape(reflected)))}"
+                )
+                if len(normalized_rotated) != 4:
+                    print(f"ERROR: {name} variant has {len(normalized_rotated)} cells!")
+                if len(_normalize_shape(reflected)) != 4:
+                    print(
+                        f"ERROR: Reflected {name} variant has {len(_normalize_shape(reflected))} cells!"
+                    )
 
-            # Rotate for the next iteration (and normalize inside the function)
             current_shape_for_rotation = _rotate_shape_90_clockwise(
                 current_shape_for_rotation
             )
 
-        TETROMINO_VARIANTS[name] = [
-            list(variant) for variant in variants
-        ]  # Store as list of lists
+        TETROMINO_VARIANTS[name] = [list(variant) for variant in variants]
         if DEBUG_MODE:
-            print(
-                f"Generated {len(TETROMINO_VARIANTS[name])} variants for {name}",
-                file=sys.stderr,
-            )
+            print(f"Generated {len(TETROMINO_VARIANTS[name])} variants for {name}")
 
 
 def _check_if_creates_2x2_block(N, existing_filled_cells, new_cells_to_add):
@@ -388,22 +388,28 @@ class Nuruomino(Problem):
                             f"  Trying {tet_type_candidate} at {sorted(list(abs_cells_candidate))}",
                             file=sys.stderr,
                         )
-                    # 1. Adjacency with current assignments
+                        if len(abs_cells_candidate) != 4:
+                            print(
+                                f"    ERROR: Candidate has {len(abs_cells_candidate)} cells!",
+                                file=sys.stderr,
+                            )
+
+                    # 1. Adjacency check (similar to goal_test)
                     violates_adj = False
-                    for r, c in abs_cells_candidate:
+                    for r_candidate, c_candidate in abs_cells_candidate:
                         for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-                            nr, nc = r + dr, c + dc
+                            nr, nc = r_candidate + dr, c_candidate + dc
                             if 0 <= nr < self.N and 0 <= nc < self.N:
-                                n_rid = board.initial_grid_ids[nr][nc]
-                                if (
-                                    n_rid in board.assignments and n_rid != rid
-                                ):  # Neighbor is an already assigned *different* region
-                                    neighbor_type = board.assignments[n_rid]["type"]
+                                n_rid_neighbor = board.initial_grid_ids[nr][nc]
+                                if n_rid_neighbor in board.assignments:
+                                    neighbor_type = board.assignments[n_rid_neighbor][
+                                        "type"
+                                    ]
                                     if neighbor_type == tet_type_candidate:
                                         violates_adj = True
                                         if DEBUG_MODE:
                                             print(
-                                                f"    Violates adjacency with region {n_rid} of type {neighbor_type}",
+                                                f"    Violates adjacency with region {n_rid_neighbor} of type {neighbor_type} at neighbor ({nr},{nc}) of candidate cell ({r_candidate},{c_candidate})",
                                                 file=sys.stderr,
                                             )
                                         break
@@ -430,15 +436,6 @@ class Nuruomino(Problem):
                         file=sys.stderr,
                     )
 
-                # Removing the immediate unfillable region pruning:
-                # if num_valid_placements_for_rid == 0:
-                #     if DEBUG_MODE:
-                #         print(
-                #             f"PRUNED PATH (unfillable region {rid}): State {state.id} leads to unfillable region {rid}.",
-                #             file=sys.stderr,
-                #         )
-                #     return []  # This state is a dead end
-
                 unassigned_regions_info.append((num_valid_placements_for_rid, rid))
 
         if not unassigned_regions_info:  # All regions assigned, no actions possible
@@ -454,27 +451,45 @@ class Nuruomino(Problem):
         for tet_type, abs_cells in board.regions_map[target_region_id][
             "valid_placements"
         ]:
-            # Re-check validity for the target region based on the current state
+            if DEBUG_MODE:
+                print(
+                    f"Considering placement for target {target_region_id}: {tet_type}, {sorted(list(abs_cells))}"
+                )
+                if len(abs_cells) != 4:
+                    print(
+                        f"    ERROR: Candidate has {len(abs_cells)} cells!",
+                        file=sys.stderr,
+                    )
 
-            # Adjacency with currently assigned pieces
+            # Re-check validity for the target region based on the current state
             violates_adjacency_target = False
-            for r, c in abs_cells:
+            for r_candidate, c_candidate in abs_cells:
                 for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-                    nr, nc = r + dr, c + dc
+                    nr, nc = r_candidate + dr, c_candidate + dc
                     if 0 <= nr < self.N and 0 <= nc < self.N:
-                        n_rid = board.initial_grid_ids[nr][nc]
-                        if n_rid in board.assignments and n_rid != target_region_id:
-                            neighbor_type = board.assignments[n_rid]["type"]
+                        n_rid_neighbor = board.initial_grid_ids[nr][nc]
+                        if (
+                            n_rid_neighbor in board.assignments
+                            and n_rid_neighbor != target_region_id
+                        ):
+                            neighbor_type = board.assignments[n_rid_neighbor]["type"]
                             if neighbor_type == tet_type:
                                 violates_adjacency_target = True
+                                if DEBUG_MODE:
+                                    print(
+                                        f"    Violates adjacency with region {n_rid_neighbor} of type {neighbor_type} at neighbor ({nr},{nc})",
+                                        file=sys.stderr,
+                                    )
                                 break
-                    if violates_adjacency_target:
-                        break
                 if violates_adjacency_target:
-                    continue
+                    break
+            if violates_adjacency_target:
+                continue
 
             # 2x2 block creation
             if _check_if_creates_2x2_block(self.N, current_filled_cells, abs_cells):
+                if DEBUG_MODE:
+                    print("    Creates a 2x2 block", file=sys.stderr)
                 continue
 
             filtered_candidate_placements.append((tet_type, abs_cells))
@@ -487,12 +502,21 @@ class Nuruomino(Problem):
 
         for tet_type, abs_cells in filtered_candidate_placements:
             actions.append((target_region_id, tet_type, abs_cells))
+            if DEBUG_MODE:
+                print(
+                    f"Generated action: Place {tet_type} at {sorted(list(abs_cells))} in region {target_region_id}",
+                    file=sys.stderr,
+                )
 
         if DEBUG_MODE:
             print(
                 f"Generated {len(actions)} actions for state {state.id} (target region {target_region_id})",
                 file=sys.stderr,
             )
+
+        if DEBUG_MODE:
+            print(board.print_board(), file=sys.stderr)
+
         return actions
 
     def result(self, state, action):
@@ -586,15 +610,17 @@ class Nuruomino(Problem):
             for tet_type_candidate, abs_cells_candidate in board.regions_map[rid][
                 "valid_placements"
             ]:
-                # 1. Adjacency with current assignments
+                # 1. Adjacency check (similar to goal_test)
                 violates_adj = False
-                for r, c in abs_cells_candidate:
+                for r_candidate, c_candidate in abs_cells_candidate:
                     for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-                        nr, nc = r + dr, c + dc
+                        nr, nc = r_candidate + dr, c_candidate + dc
                         if 0 <= nr < self.N and 0 <= nc < self.N:
-                            n_rid = board.initial_grid_ids[nr][nc]
-                            if n_rid in board.assignments and n_rid != rid:
-                                neighbor_type = board.assignments[n_rid]["type"]
+                            n_rid_neighbor = board.initial_grid_ids[nr][nc]
+                            if n_rid_neighbor in board.assignments:
+                                neighbor_type = board.assignments[n_rid_neighbor][
+                                    "type"
+                                ]
                                 if neighbor_type == tet_type_candidate:
                                     violates_adj = True
                                     break
@@ -660,8 +686,9 @@ class Nuruomino(Problem):
 
 
 def solve_nuruomino():
-    # Keep expected_output_file for local testing, remove for submission
-    # expected_output_file = "test-03.out"
+    DEBUG_MODE_COMPARISON = True
+    expected_output_file = "test06.out"
+    
     try:
         generate_all_tetromino_variants()
         if DEBUG_MODE:
@@ -688,9 +715,24 @@ def solve_nuruomino():
         if goal_node:
             if DEBUG_MODE:
                 print("\nSolution found!", file=sys.stderr)
-            print(goal_node.state.board.print_board())
+            solution_str = goal_node.state.board.print_board()
+            print(solution_str)
 
-            # Removed file comparison logic as it's for local testing
+            # --- Comparação com ficheiro esperado ---
+            if DEBUG_MODE_COMPARISON:
+                try:
+                    with open(expected_output_file, "r") as f:
+                        expected_str = f.read().strip()
+                    if solution_str.strip() == expected_str:
+                        print("\n[SUCCESS] Output igual ao ficheiro esperado!")
+                    else:
+                        print("\n[FAIL] Output diferente do ficheiro esperado!")
+                        print("----- Esperado -----")
+                        print(expected_str)
+                        print("----- Obtido -----")
+                        print(solution_str)
+                except Exception as e:
+                    print(f"[WARN] Não foi possível comparar com {expected_output_file}: {e}")
 
         else:
             if DEBUG_MODE:
