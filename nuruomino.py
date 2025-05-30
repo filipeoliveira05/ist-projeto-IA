@@ -5,7 +5,7 @@
 
 import sys
 from search import Problem, Node, best_first_graph_search
-from copy import deepcopy
+# from copy import deepcopy # Mudei de deepcopy para dict()
 from collections import deque  # For BFS in connectivity check
 
 # Global debug flag - Set to False for production to suppress stderr output
@@ -447,9 +447,7 @@ class Nuruomino(Problem):
     def result(self, state, action):
         """Returns the new state after applying an action."""
         region_id, tet_type, abs_cells = action
-        new_assignments = deepcopy(
-            state.board.assignments
-        )  # Deep copy to avoid modifying original state
+        new_assignments = dict(state.board.assignments)
         new_assignments[region_id] = {"type": tet_type, "abs_cells": abs_cells}
 
         # Create a new Board instance with the updated assignments
@@ -671,3 +669,7 @@ def solve_nuruomino():
 
 if __name__ == "__main__":
     solve_nuruomino()
+
+# PONTO DE SITUAÇÃO:
+# Testes a falhar por Time Limit: 5, 9
+# Testes a falhar por output diferente: 10 (FICHEIRO .OUT ESTÁ MAL???)
