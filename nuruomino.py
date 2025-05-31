@@ -5,7 +5,7 @@
 
 import sys
 from search import Problem, Node, best_first_graph_search
-# from copy import deepcopy # Mudei de deepcopy para dict()
+from copy import deepcopy
 from collections import deque  # For BFS in connectivity check
 
 # Global debug flag - Set to False for production to suppress stderr output
@@ -440,14 +440,17 @@ class Nuruomino(Problem):
                 f"Generated {len(actions)} actions for region {target_region_id} in state {state.id}",
                 file=sys.stderr,
             )
-            print(board.print_board(), file=sys.stderr)
+        print(board.print_board(), file=sys.stderr)
+        print("\n")
 
         return actions
 
     def result(self, state, action):
         """Returns the new state after applying an action."""
         region_id, tet_type, abs_cells = action
-        new_assignments = dict(state.board.assignments)
+        new_assignments = deepcopy(
+            state.board.assignments
+        )  # Deep copy to avoid modifying original state
         new_assignments[region_id] = {"type": tet_type, "abs_cells": abs_cells}
 
         # Create a new Board instance with the updated assignments
@@ -509,109 +512,54 @@ class Nuruomino(Problem):
         return True  # All conditions met
 
     def h(self, node):
-        """
-        Heuristic function for the Nuruomino problem.
-        Estimates the cost from the current state to the goal.
-        This heuristic aims to be admissible or at least highly informative for best-first search.
-        """
         board = node.state.board
-
-        # H1: Number of unassigned regions (admissible, counts remaining tasks)
+        h_value = 0
         unassigned_regions = [
             rid for rid in self.all_region_ids if rid not in board.assignments
         ]
-        h_unassigned = len(unassigned_regions)
+        num_assigned = len(board.assignments)
+        total_regions = len(self.all_region_ids)
 
-        # If all regions are assigned, and goal_test might pass, heuristic cost is 0
-        if h_unassigned == 0:
+        if not unassigned_regions:
             return 0
 
-        # H2: Check for immediate unfillable regions (returning a large finite number instead of infinity)
-        current_filled_cells = board.get_filled_cells()
+        min_valid_placements = float("inf")
         for rid in unassigned_regions:
-            has_valid_placement_found_in_h = False
-            for tet_type_candidate, abs_cells_candidate in board.regions_map[rid][
-                "valid_placements"
-            ]:
-                # 1. Adjacency check (similar to goal_test)
-                violates_adj = False
-                for r_candidate, c_candidate in abs_cells_candidate:
-                    for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-                        nr, nc = r_candidate + dr, c_candidate + dc
-                        if 0 <= nr < self.N and 0 <= nc < self.N:
-                            n_rid_neighbor = board.initial_grid_ids[nr][nc]
-                            if n_rid_neighbor in board.assignments:
-                                neighbor_type = board.assignments[n_rid_neighbor][
-                                    "type"
-                                ]
-                                if neighbor_type == tet_type_candidate:
-                                    violates_adj = True
-                                    break
-                    if violates_adj:
-                        break
-                if violates_adj:
-                    continue
+            num_valid = len(board.regions_map[rid]["valid_placements"])
+            min_valid_placements = min(min_valid_placements, num_valid)
 
-                # 2. 2x2 block creation
-                if _check_if_creates_2x2_block(
-                    self.N, current_filled_cells, abs_cells_candidate
-                ):
-                    continue
+        # Component 1: Prioritize constrained regions (as before)
+        constraint_priority = 0
+        if min_valid_placements > 0 and min_valid_placements != float("inf"):
+            constraint_priority = min_valid_placements
+        elif min_valid_placements == 0:
+            return float("inf")  # Dead end
 
-                has_valid_placement_found_in_h = True
-                break
+        # Component 2: Reward progress (more assigned pieces)
+        progress_reward = total_regions - num_assigned  # Fewer unassigned = more reward
 
-            if not has_valid_placement_found_in_h:
-                if DEBUG_MODE:
-                    print(
-                        f"HEURISTIC WARNING: Region {rid} has 0 valid placements!",
-                        file=sys.stderr,
-                    )
-                return float(
-                    len(self.all_region_ids) * 100
-                )  # Return a large finite number
+        # Combine the components - you'll need to experiment with the weight
+        weight_constraint = 0.1
+        weight_progress = 10  # Adjust this weight
 
-        # H3: Connectivity Heuristic (number of disjoint shaded components)
-        h_connectivity = 0
-        filled_cells = current_filled_cells
-        if filled_cells:
-            num_components = 0
-            visited_connectivity = set()
-
-            for r_start, c_start in filled_cells:
-                if (r_start, c_start) not in visited_connectivity:
-                    num_components += 1
-                    q_bfs = deque([(r_start, c_start)])
-                    visited_connectivity.add((r_start, c_start))
-
-                    while q_bfs:
-                        r, c = q_bfs.popleft()
-                        for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-                            nr, nc = r + dr, c + dc
-                            if (nr, nc) in filled_cells and (
-                                nr,
-                                nc,
-                            ) not in visited_connectivity:
-                                visited_connectivity.add((nr, nc))
-                                q_bfs.append((nr, nc))
-
-            if num_components > 1:
-                h_connectivity = num_components - 1
-
-        h_value = h_unassigned + h_connectivity
+        h_value = (weight_constraint * constraint_priority) + (
+            weight_progress * progress_reward
+        )
 
         if DEBUG_MODE:
             print(
-                f"Heuristic for state {node.state.id}: unassigned={h_unassigned}, connectivity={h_connectivity}, total={h_value}",
+                f"Heuristic for state {node.state.id}: min_valid={min_valid_placements}, assigned={num_assigned}, h={h_value}",
                 file=sys.stderr,
             )
+
         return h_value
 
 
 def solve_nuruomino():
-    DEBUG_MODE_COMPARISON = False
-    expected_output_file = "test01.out"
-    
+    DEBUG_MODE_COMPARISON = True
+    expected_output_file = "test13.out"
+    # expected_output_file = "../132/sample-nuruominoboards/test-01.out"
+
     try:
         generate_all_tetromino_variants()
         if DEBUG_MODE:
@@ -652,7 +600,9 @@ def solve_nuruomino():
                         print("----- Obtido -----")
                         print(solution_str)
                 except Exception as e:
-                    print(f"[WARN] Não foi possível comparar com {expected_output_file}: {e}")
+                    print(
+                        f"[WARN] Não foi possível comparar com {expected_output_file}: {e}"
+                    )
 
         else:
             if DEBUG_MODE:
@@ -669,7 +619,3 @@ def solve_nuruomino():
 
 if __name__ == "__main__":
     solve_nuruomino()
-
-# PONTO DE SITUAÇÃO:
-# Testes a falhar por Time Limit: 5, 9
-# Testes a falhar por output diferente: 10 (FICHEIRO .OUT ESTÁ MAL???)
