@@ -13,14 +13,37 @@ DEBUG_MODE = False
 
 # --- Global Definitions ---
 TETROMINO_BASE_SHAPES = {
-    "L": frozenset([(0, 0), (1, 0), (2, 0), (2, 1)]),  # 3x2 L-shape
-    "I": frozenset([(0, 0), (1, 0), (2, 0), (3, 0)]),  # 4x1 line
-    "T": frozenset([(0, 0), (0, 1), (0, 2), (1, 1)]),  # 2x3 T-shape
-    "S": frozenset(
-        [(0, 1), (1, 1), (1, 0), (2, 0)]
-    ),  # 3x2 S-shape (also Z-shape, depending on orientation)
+    "L": {
+        "shape": frozenset(
+            [
+                (0, 0),
+                (1, 0),
+                (2, 0),
+                (2, 1),
+            ]
+        ),
+        "forbidden_relative": [(1, 1)],
+    },
+    "I": {
+        "shape": frozenset([(0, 0), (1, 0), (2, 0), (3, 0)]),
+        "forbidden_relative": [],
+    },
+    "T": {
+        "shape": frozenset([(0, 0), (0, 1), (0, 2), (1, 1)]),
+        "forbidden_relative": [
+            (1, 0),
+            (1, 2),
+        ],
+    },
+    "S": {
+        "shape": frozenset([(0, 1), (1, 1), (1, 0), (2, 0)]),
+        "forbidden_relative": [
+            (0, 0),
+            (2, 1),
+        ],
+    },
 }
-ALLOWED_TETROMINO_TYPES = ["L", "I", "T", "S"]
+ALLOWED_TETROMINO_TYPES = ["I", "T", "S", "L"]
 TETROMINO_VARIANTS = {}  # Stores all rotated/reflected variants for each type
 
 
@@ -63,7 +86,8 @@ def generate_all_tetromino_variants():
     if TETROMINO_VARIANTS:
         return
 
-    for name, base_shape in TETROMINO_BASE_SHAPES.items():
+    for name, (info) in TETROMINO_BASE_SHAPES.items():
+        base_shape = info["shape"]
         variants = set()
         current_shape_for_rotation = base_shape
 
@@ -181,20 +205,15 @@ class Board:
 
     def __init__(self, N, initial_grid_ids, regions_map, assignments=None):
         self.N = N
-        self.initial_grid_ids = initial_grid_ids  # N x N list of strings (region IDs)
-        self.regions_map = (
-            regions_map  # Dict: region_id -> {cells: set, valid_placements: list}
-        )
-        self.assignments = (
-            assignments or {}
-        )  # Dict: region_id -> {type: str, abs_cells: frozenset}
-
-        # The solution grid for printing (populated dynamically)
+        self.initial_grid_ids = initial_grid_ids
+        self.regions_map = regions_map
+        self.assignments = assignments or {}
         self.solution_grid = [row[:] for row in initial_grid_ids]
+        self.forbidden_cells = set()  # New attribute to track forbidden cells
         for region_id, data in self.assignments.items():
             for r, c in data["abs_cells"]:
                 if 0 <= r < N and 0 <= c < N:
-                    self.solution_grid[r][c] = data["type"]  # Fill with tetromino type
+                    self.solution_grid[r][c] = data["type"]
 
     @staticmethod
     def parse_instance():
@@ -287,13 +306,6 @@ class Board:
 
         return Board(N, initial_grid_ids, regions_map, {})
 
-    def print_board(self):
-        """Imprime a grelha (solution_grid) no formato de output especificado."""
-        output = ""
-        for r in range(self.N):
-            output += "\t".join(self.solution_grid[r]) + "\n"
-        return output.strip()  # Remove a última nova linha
-
     def __eq__(self, other):
         if not isinstance(other, Board):
             return False
@@ -310,28 +322,114 @@ class Board:
         grid_tuple = tuple(tuple(row) for row in self.initial_grid_ids)
         return hash((self.N, grid_tuple, assignments_tuple))
 
-    def count_almost_2x2_blocks_internal(self):
-        """Counts 3-cell almost-2x2 blocks within the current filled cells."""
-        filled = set()
-        for data in self.assignments.values():
-            filled.update(data["abs_cells"])
-
-        count = 0
-        # Iterate only over possible top-left corners of 2x2 blocks
-        for r in range(self.N - 1):
-            for c in range(self.N - 1):
-                block_cells = [(r, c), (r + 1, c), (r, c + 1), (r + 1, c + 1)]
-                filled_in_block = sum(1 for cell in block_cells if cell in filled)
-                if filled_in_block == 3:  # Check for 3 cells
-                    count += 1
-        return count
-
     def get_filled_cells(self):
         """Returns a set of all currently filled cells on the board."""
         filled_cells = set()
         for data in self.assignments.values():
             filled_cells.update(data["abs_cells"])
         return filled_cells
+
+    def mark_forbidden_2x2(self, placed_cells):
+        """
+        Identifies and marks cells that would complete a 2x2 block if filled.
+        Adds these cells to the self.forbidden_cells set, using the _check_if_creates_2x2_block logic.
+
+        Args:
+            placed_cells: A frozenset of the cells that were just placed.
+        """
+        n = self.N
+        filled_cells = self.get_filled_cells()
+
+        forbidden_candidates = set()
+
+        # Check empty neighbors of placed cells that would complete a 2x2
+        for r_placed, c_placed in placed_cells:
+            for dr, dc in [
+                (0, 1),
+                (0, -1),
+                (1, 0),
+                (-1, 0),
+            ]:  # Check orthogonal neighbors
+                r_neighbor, c_neighbor = r_placed + dr, c_placed + dc
+                if (
+                    0 <= r_neighbor < n
+                    and 0 <= c_neighbor < n
+                    and (r_neighbor, c_neighbor) not in filled_cells
+                ):
+                    # Temporarily consider this neighbor as filled and check for 2x2 completion
+                    temp_filled = filled_cells | {(r_neighbor, c_neighbor)}
+                    if _check_if_creates_2x2_block(
+                        n, filled_cells, {(r_neighbor, c_neighbor)}
+                    ):
+                        forbidden_candidates.add((r_neighbor, c_neighbor))
+
+        # Add the forbidden candidates to the set of forbidden cells
+        for r_forbid, c_forbid in forbidden_candidates:
+            if (r_forbid, c_forbid) not in self.get_filled_cells():
+                self.forbidden_cells.add((r_forbid, c_forbid))
+        if DEBUG_MODE:
+            print(f"MarkForbidden - Placed cells: {placed_cells}")
+            print(f"MarkForbidden - Filled cells: {self.get_filled_cells()}")
+            print(f"MarkForbidden - Forbidden candidates: {forbidden_candidates}")
+            print(
+                f"MarkForbidden - Forbidden cells after check: {self.forbidden_cells}"
+            )
+
+    def print_board(self):
+        """Imprime a grelha (solution_grid) mostrando 'X' para células proibidas."""
+        output = ""
+        for r in range(self.N):
+            row_str = []
+            for c in range(self.N):
+                # if (r, c) in self.forbidden_cells:
+                #     row_str.append("X")
+
+                row_str.append(self.solution_grid[r][c])
+            output += "\t".join(row_str) + "\n"
+        return output.strip()
+
+    def recalculate_valid_placements(self, region_id):
+        """Recalculates the valid tetromino placements for a given region,
+        considering the currently filled and forbidden cells."""
+        if region_id not in self.regions_map:
+            return []
+
+        region_cells = self.regions_map[region_id]["cells"]
+        valid_placements = set()
+        occupied_cells = self.get_filled_cells() | self.forbidden_cells
+
+        for tet_type in ALLOWED_TETROMINO_TYPES:
+            for variant_coords_list in TETROMINO_VARIANTS[tet_type]:
+                variant_coords_frozen = frozenset(variant_coords_list)
+
+                for vr_anchor, vc_anchor in variant_coords_frozen:
+                    for r_region_cell, c_region_cell in region_cells:
+                        offset_r = r_region_cell - vr_anchor
+                        offset_c = c_region_cell - vc_anchor
+
+                        current_placement_abs_cells = frozenset(
+                            [
+                                (vr + offset_r, vc + offset_c)
+                                for vr, vc in variant_coords_frozen
+                            ]
+                        )
+
+                        # Check if the placement is within the region's original bounds
+                        if current_placement_abs_cells.issubset(region_cells):
+                            # Check if any cell in the placement overlaps with already occupied or forbidden cells
+                            if not (current_placement_abs_cells & occupied_cells):
+                                if len(current_placement_abs_cells) == 4:
+                                    valid_placements.add(
+                                        (tet_type, current_placement_abs_cells)
+                                    )
+
+        self.regions_map[region_id]["valid_placements"] = list(valid_placements)
+        if DEBUG_MODE:
+            print(
+                f"Region {region_id}: Recalculated {len(valid_placements)} valid placements.",
+                file=sys.stderr,
+            )
+        return list(valid_placements)
 
 
 class Nuruomino(Problem):
@@ -460,6 +558,8 @@ class Nuruomino(Problem):
             state.board.regions_map,  # regions_map is immutable, can be shared
             new_assignments,
         )
+        new_board.forbidden_cells = deepcopy(state.board.forbidden_cells)
+        new_board.mark_forbidden_2x2(abs_cells)
         return NuruominoState(new_board)
 
     def goal_test(self, state):
@@ -468,6 +568,12 @@ class Nuruomino(Problem):
 
         # 1. All regions must be assigned
         if len(board.assignments) != len(self.all_region_ids):
+            if DEBUG_MODE:
+                print(
+                    f"Goal test failed: {len(board.assignments)} regions assigned, expected {len(self.all_region_ids)}.",
+                    file=sys.stderr,
+                )
+
             return False
 
         # 2. No 2x2 blocks of filled cells
@@ -519,6 +625,7 @@ class Nuruomino(Problem):
         ]
         num_assigned = len(board.assignments)
         total_regions = len(self.all_region_ids)
+        num_forbidden_cells = len(board.forbidden_cells)
 
         if not unassigned_regions:
             return 0
@@ -527,8 +634,13 @@ class Nuruomino(Problem):
         for rid in unassigned_regions:
             num_valid = len(board.regions_map[rid]["valid_placements"])
             min_valid_placements = min(min_valid_placements, num_valid)
+            if DEBUG_MODE:
+                print(
+                    f"Heuristic Debug - Region: {rid}, Valid Placements: {num_valid}",
+                    file=sys.stderr,
+                )
 
-        # Component 1: Prioritize constrained regions (as before)
+        # Component 1: Prioritize constrained regions (MRV heuristic)
         constraint_priority = 0
         if min_valid_placements > 0 and min_valid_placements != float("inf"):
             constraint_priority = min_valid_placements
@@ -536,19 +648,54 @@ class Nuruomino(Problem):
             return float("inf")  # Dead end
 
         # Component 2: Reward progress (more assigned pieces)
-        progress_reward = total_regions - num_assigned  # Fewer unassigned = more reward
+        progress_reward = total_regions - num_assigned
 
-        # Combine the components - you'll need to experiment with the weight
+        # Component 3: Normalized forbidden cell count
+        normalized_forbidden = 0
+        if num_assigned > 0:
+            normalized_forbidden = num_forbidden_cells / num_assigned
+        elif num_forbidden_cells > 0:
+            normalized_forbidden = (
+                num_forbidden_cells  # If no pieces, just use the count
+            )
+
+        # We want to prioritize states with a *higher* density of forbidden cells,
+        # so we use a positive weight.
+        forbidden_density_priority = -normalized_forbidden * 1.0
+
+        # Piece type prioritization with different weights
+        piece_type_bonus = 0
+        piece_weights = {
+            "I": 0.4,
+            "T": 0.3,
+            "S": 0.2,
+            "L": 0.1,
+        }  # Higher weight = higher priority
+
+        for region_id, assignment in board.assignments.items():
+            piece_type = assignment["type"]
+            piece_type_bonus += piece_weights.get(piece_type, 0)
+
+        # We want to prioritize states with a higher weighted sum of placed pieces,
+        # so we subtract this bonus (because best-first search minimizes the heuristic).
+        piece_priority_heuristic = -piece_type_bonus * 1.0  # Adjust the overall weight
+
+        # Combine the components with adjusted weights
         weight_constraint = 0.1
-        weight_progress = 10  # Adjust this weight
+        weight_progress = 1
+        weight_forbidden_impact = 0.5  # Increase weight for forbidden impact
+        weight_piece_priority = 0.1  # Adjusted weight for piece type priority
 
-        h_value = (weight_constraint * constraint_priority) + (
-            weight_progress * progress_reward
+        h_value = (
+            (weight_constraint * constraint_priority)
+            + (weight_progress * progress_reward)
+            + (weight_forbidden_impact * forbidden_density_priority)
+            + (weight_piece_priority * piece_priority_heuristic)
         )
 
         if DEBUG_MODE:
             print(
-                f"Heuristic for state {node.state.id}: min_valid={min_valid_placements}, assigned={num_assigned}, h={h_value}",
+                f"Heuristic for state {node.state.id}: min_valid={min_valid_placements}, assigned={num_assigned}, forbidden={num_forbidden_cells}, forbidden_impact={forbidden_impact:.2f}, h={h_value}",
                 file=sys.stderr,
             )
 
@@ -557,8 +704,8 @@ class Nuruomino(Problem):
 
 def solve_nuruomino():
     DEBUG_MODE_COMPARISON = True
-    expected_output_file = "test13.out"
-    # expected_output_file = "../132/sample-nuruominoboards/test-01.out"
+    expected_output_file = "test05.out"
+    # expected_output_file = "../132/sample-nuruominoboards/test-03.out"
 
     try:
         generate_all_tetromino_variants()
