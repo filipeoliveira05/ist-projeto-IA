@@ -10,6 +10,7 @@ from collections import deque  # For BFS in connectivity check
 
 # Global debug flag - Set to False for production to suppress stderr output
 DEBUG_MODE = False
+DEBUG_MODE_SIMPLE = False  # Simplified debug mode for less verbose output
 
 # --- Global Definitions ---
 TETROMINO_BASE_SHAPES = {
@@ -538,8 +539,10 @@ class Nuruomino(Problem):
                 f"Generated {len(actions)} actions for region {target_region_id} in state {state.id}",
                 file=sys.stderr,
             )
-        print(board.print_board(), file=sys.stderr)
-        print("\n")
+
+        if DEBUG_MODE_SIMPLE:
+            print(board.print_board(), file=sys.stderr)
+            print("\n")
 
         return actions
 
@@ -703,8 +706,8 @@ class Nuruomino(Problem):
 
 
 def solve_nuruomino():
-    DEBUG_MODE_COMPARISON = True
-    expected_output_file = "test05.out"
+    DEBUG_MODE_COMPARISON = False
+    expected_output_file = "test15.out"
     # expected_output_file = "../132/sample-nuruominoboards/test-03.out"
 
     try:
