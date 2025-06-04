@@ -549,9 +549,7 @@ class Nuruomino(Problem):
     def result(self, state, action):
         """Returns the new state after applying an action."""
         region_id, tet_type, abs_cells = action
-        new_assignments = deepcopy(
-            state.board.assignments
-        )  # Deep copy to avoid modifying original state
+        new_assignments = dict(state.board.assignments)
         new_assignments[region_id] = {"type": tet_type, "abs_cells": abs_cells}
 
         # Create a new Board instance with the updated assignments
@@ -561,7 +559,7 @@ class Nuruomino(Problem):
             state.board.regions_map,  # regions_map is immutable, can be shared
             new_assignments,
         )
-        new_board.forbidden_cells = deepcopy(state.board.forbidden_cells)
+        new_board.forbidden_cells = set(state.board.forbidden_cells)
         new_board.mark_forbidden_2x2(abs_cells)
         return NuruominoState(new_board)
 
