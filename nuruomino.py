@@ -1,5 +1,5 @@
 # nuruomino.py: Projeto de Inteligência Artificial 2024/2025
-# Grupo 00:
+# Grupo 132:
 # 110633 Filipe Oliveira
 # 110720 Francisco Andrade
 
