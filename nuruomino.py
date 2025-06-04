@@ -366,7 +366,7 @@ class Board:
 
         # Add the forbidden candidates to the set of forbidden cells
         for r_forbid, c_forbid in forbidden_candidates:
-            if (r_forbid, c_forbid) not in self.get_filled_cells():
+            if (r_forbid, c_forbid) not in filled_cells:
                 self.forbidden_cells.add((r_forbid, c_forbid))
         if DEBUG_MODE:
             print(f"MarkForbidden - Placed cells: {placed_cells}")
@@ -452,13 +452,13 @@ class Nuruomino(Problem):
         board = state.board
         current_filled_cells = board.get_filled_cells()
 
-        if _check_if_creates_2x2_block(self.N, current_filled_cells, frozenset()):
-            if DEBUG_MODE:
-                print(
-                    f"PRUNED STATE (2x2 violation): State {state.id}",
-                    file=sys.stderr,
-                )
-            return []
+        # if _check_if_creates_2x2_block(self.N, current_filled_cells, frozenset()):
+        #     if DEBUG_MODE:
+        #         print(
+        #             f"PRUNED STATE (2x2 violation): State {state.id}",
+        #             file=sys.stderr,
+        #         )
+        #     return []
 
         unassigned_regions_info = []
         for rid in self.all_region_ids:
@@ -483,9 +483,9 @@ class Nuruomino(Problem):
             )
 
         actions = []
-        for tet_type, abs_cells_candidate in board.regions_map[target_region_id][
+        for tet_type, abs_cells_candidate in sorted(board.regions_map[target_region_id][
             "valid_placements"
-        ]:
+        ]):
             if DEBUG_MODE:
                 print(
                     f"\nTrying placement: {tet_type} at {sorted(list(abs_cells_candidate))}",
@@ -725,7 +725,7 @@ def solve_nuruomino():
             print("\nSolving with best-first graph search...", file=sys.stderr)
 
         goal_node = best_first_graph_search(
-            problem, lambda n: problem.h(n), display=False
+            problem, problem.h, display=False
         )
 
         if goal_node:
