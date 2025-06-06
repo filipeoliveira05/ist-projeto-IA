@@ -43,7 +43,7 @@ TETROMINO_BASE_SHAPES = {
     },
 }
 ALLOWED_TETROMINO_TYPES = ["I", "T", "S", "L"]
-TETROMINO_VARIANTS = {}  # Stores all rotated/reflected variants for each type
+TETROMINO_VARIANTS = {}
 
 
 # --- Tetromino Manipulation Functions ---
@@ -88,18 +88,17 @@ def generate_all_tetromino_variants():
         variants = set()
         current_shape_for_rotation = base_shape
 
-        for i in range(4):  # 4 rotations
+        for i in range(4):
             normalized_rotated = _normalize_shape(current_shape_for_rotation)
             variants.add(normalized_rotated)
 
             reflected = _reflect_shape_vertical_axis(current_shape_for_rotation)
-            variants.add(_normalize_shape(reflected))  # Add normalized reflection
+            variants.add(_normalize_shape(reflected))
 
             current_shape_for_rotation = _rotate_shape_90_clockwise(
                 current_shape_for_rotation
             )
 
-        # Store as lists of tuples for easier manipulation if needed, though frozensets are best for sets
         TETROMINO_VARIANTS[name] = [list(variant) for variant in variants]
         if DEBUG_MODE:
             print(
@@ -115,11 +114,7 @@ def _check_if_creates_2x2_block(N, existing_filled_cells, new_cells_to_add):
     """
     all_filled = existing_filled_cells | new_cells_to_add
 
-    # Iterate only over possible top-left corners that include a newly added cell
-    # This optimization reduces checks significantly.
     for r_new, c_new in new_cells_to_add:
-        # Check all 4 possible 2x2 block origins that involve (r_new, c_new)
-        # Block 1: (r_new, c_new) is top-left
         if r_new + 1 < N and c_new + 1 < N:
             if all(
                 (_r, _c) in all_filled
@@ -131,7 +126,7 @@ def _check_if_creates_2x2_block(N, existing_filled_cells, new_cells_to_add):
                 ]
             ):
                 return True
-        # Block 2: (r_new, c_new) is top-right
+            
         if r_new + 1 < N and c_new - 1 >= 0:
             if all(
                 (_r, _c) in all_filled
@@ -143,7 +138,7 @@ def _check_if_creates_2x2_block(N, existing_filled_cells, new_cells_to_add):
                 ]
             ):
                 return True
-        # Block 3: (r_new, c_new) is bottom-left
+
         if r_new - 1 >= 0 and c_new + 1 < N:
             if all(
                 (_r, _c) in all_filled
@@ -155,7 +150,7 @@ def _check_if_creates_2x2_block(N, existing_filled_cells, new_cells_to_add):
                 ]
             ):
                 return True
-        # Block 4: (r_new, c_new) is bottom-right
+
         if r_new - 1 >= 0 and c_new - 1 >= 0:
             if all(
                 (_r, _c) in all_filled
@@ -590,53 +585,6 @@ class Nuruomino(Problem):
 
         unassigned_regions_info = []
 
-        mac_queue = deque()
-        for rid in self.all_region_ids:
-            if rid not in board.assignments:
-                recalculated_placements = board.recalculate_valid_placements(rid)
-                num_valid_placements = len(recalculated_placements)
-
-                if num_valid_placements == 0:
-                    if DEBUG_MODE:
-                        print(
-                            f"PRUNED STATE by initial FC: Region {rid} has 0 valid placements.",
-                            file=sys.stderr,
-                        )
-                    return []
-
-                mac_queue.append(rid)
-
-        while mac_queue:
-            current_rid = mac_queue.popleft()
-
-            old_domain_size = len(board.regions_map[current_rid]["valid_placements"])
-
-            recalculated_placements = board.recalculate_valid_placements(current_rid)
-            new_domain_size = len(recalculated_placements)
-
-            if new_domain_size == 0:
-                if DEBUG_MODE:
-                    print(
-                        f"PRUNED STATE by MAC: Region {current_rid} domain became empty during propagation.",
-                        file=sys.stderr,
-                    )
-                return []
-
-            if new_domain_size < old_domain_size:
-                if DEBUG_MODE:
-                    print(
-                        f"  MAC: Domain for {current_rid} reduced from {old_domain_size} to {new_domain_size}. Propagating...",
-                        file=sys.stderr,
-                    )
-                for adj_rid_of_current in self.region_adjacencies.get(
-                    current_rid, frozenset()
-                ):
-                    if (
-                        adj_rid_of_current not in board.assignments
-                        and adj_rid_of_current not in mac_queue
-                    ):
-                        mac_queue.append(adj_rid_of_current)
-
         for rid in self.all_region_ids:
             if rid not in board.assignments:
                 num_valid_placements = len(board.regions_map[rid]["valid_placements"])
@@ -650,8 +598,15 @@ class Nuruomino(Problem):
 
         if not unassigned_regions_info:
             return []
+        
+        priority_regions = ['3', '4', '5', '6', '7', '8']
+        for pr in priority_regions:
+            for i, info in enumerate(unassigned_regions_info):
+                if info[2] == pr:
+                    unassigned_regions_info.insert(0, unassigned_regions_info.pop(i))
+                    break
 
-        unassigned_regions_info.sort()
+        unassigned_regions_info.sort(key=lambda x: (x[0], x[1], int(x[2])))
         target_region_id = unassigned_regions_info[0][2]
 
         if DEBUG_MODE:
@@ -679,42 +634,12 @@ class Nuruomino(Problem):
 
         initial_regions_map_for_lcv_eval = self.initial_regions_map_template
 
-        for tet_type, abs_cells_candidate in board.regions_map[target_region_id][
-            "valid_placements"
-        ]:
-            hypo_assignments = dict(board.assignments)
-            hypo_assignments[target_region_id] = {
-                "type": tet_type,
-                "abs_cells": abs_cells_candidate,
-            }
+        for tet_type, abs_cells_candidate in board.regions_map[target_region_id]["valid_placements"]:
+            forbidden_overlap = len(abs_cells_candidate & board.get_forbidden_cells())
+            touches_edge = any(r == 0 or r == board.N-1 or c == 0 or c == board.N-1 for r, c in abs_cells_candidate)
+            scored_actions.append((forbidden_overlap + touches_edge, tet_type, abs_cells_candidate))
 
-            hypo_filled_cells = board.get_filled_cells() | abs_cells_candidate
-
-            temp_lcv_board = Board(
-                board.N,
-                board.initial_grid_ids,
-                initial_regions_map_for_lcv_eval,
-                board.cell_to_region_id_map,
-                hypo_assignments,
-                board.get_forbidden_cells(),
-                hypo_filled_cells,
-            )
-            temp_lcv_board.mark_forbidden_2x2(
-                abs_cells_candidate
-            )
-
-            total_neighbor_options = 0
-            for neighbor_rid in unassigned_neighbors_of_target:
-                neighbor_valid_placements_count = len(
-                    temp_lcv_board.recalculate_valid_placements(neighbor_rid)
-                )
-                total_neighbor_options += neighbor_valid_placements_count
-
-            scored_actions.append(
-                (-total_neighbor_options, tet_type, abs_cells_candidate)
-            )
-
-        scored_actions.sort()
+        scored_actions.sort(key=lambda x: (x[0], x[1], x[2], sorted(x[2])))
 
         actions = [
             (target_region_id, tet_type, abs_cells_candidate)
@@ -757,6 +682,25 @@ class Nuruomino(Problem):
             abs_cells
         )
 
+        propagation_queue = deque()
+        for neighbor_rid in self.region_adjacencies.get(region_id, frozenset()):
+            if neighbor_rid not in new_board.assignments:
+                propagation_queue.append(neighbor_rid)
+
+        while propagation_queue:
+            rid_to_check = propagation_queue.popleft()
+
+            old_domain_size = len(new_board.regions_map[rid_to_check]['valid_placements'])
+            
+            new_board.recalculate_valid_placements(rid_to_check)
+            
+            new_domain_size = len(new_board.regions_map[rid_to_check]['valid_placements'])
+
+            if new_domain_size < old_domain_size and new_domain_size > 0:
+                for neighbor_of_neighbor in self.region_adjacencies.get(rid_to_check, frozenset()):
+                    if neighbor_of_neighbor not in new_board.assignments and neighbor_of_neighbor not in propagation_queue:
+                            propagation_queue.append(neighbor_of_neighbor)
+
         return NuruominoState(new_board)
 
     def goal_test(self, state):
@@ -766,8 +710,8 @@ class Nuruomino(Problem):
         if len(board.assignments) != len(self.all_region_ids):
             return False
 
-        print(board.print_board(), file=sys.stderr)
-        print("\n", file=sys.stderr)
+        #print(board.print_board(), file=sys.stderr)
+        #print("\n", file=sys.stderr)
      
         if _check_if_creates_2x2_block(self.N, board.get_filled_cells(), frozenset()):
             if DEBUG_MODE:
@@ -883,7 +827,6 @@ def solve_nuruomino():
             solution_str = goal_node.state.board.print_board()
             print(solution_str)
 
-            # --- Comparação com ficheiro esperado ---
             if DEBUG_MODE_COMPARISON:
                 try:
                     with open(expected_output_file, "r") as f:
