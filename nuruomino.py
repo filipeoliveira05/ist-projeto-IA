@@ -5,7 +5,6 @@
 
 import sys
 from search import Problem, best_first_graph_search
-from copy import deepcopy
 from collections import deque
 
 # Global debug flag
@@ -203,7 +202,7 @@ class Board:
     ):
         self.N = N
         self.initial_grid_ids = [row[:] for row in initial_grid_ids]
-        self.regions_map = deepcopy(regions_map)
+        self.regions_map = {k: {"cells": set(v["cells"]), "valid_placements": list(v["valid_placements"])} for k, v in regions_map.items()}
         self.cell_to_region_id_map = cell_to_region_id_map
         self.assignments = (
             assignments or {}
@@ -500,9 +499,7 @@ class Nuruomino(Problem):
         super().__init__(NuruominoState(initial_board))
         self.N = initial_board.N
         self.all_region_ids = sorted(initial_board.regions_map.keys())
-        self.initial_regions_map_template = deepcopy(
-            initial_board.regions_map
-        )
+        self.initial_regions_map_template = {k: {"cells": set(v["cells"]), "valid_placements": list(v["valid_placements"])} for k, v in initial_board.regions_map.items()}
         self.cell_to_region_id_map = initial_board.cell_to_region_id_map
 
         self.region_adjacencies = self._calculate_region_adjacencies(initial_board)
@@ -685,7 +682,7 @@ class Nuruomino(Problem):
         for tet_type, abs_cells_candidate in board.regions_map[target_region_id][
             "valid_placements"
         ]:
-            hypo_assignments = deepcopy(board.assignments)
+            hypo_assignments = dict(board.assignments)
             hypo_assignments[target_region_id] = {
                 "type": tet_type,
                 "abs_cells": abs_cells_candidate,
@@ -744,7 +741,8 @@ class Nuruomino(Problem):
         new_assignments = dict(state.board.assignments)
         new_assignments[region_id] = {"type": tet_type, "abs_cells": abs_cells}
 
-        new_filled_cells = state.board.get_filled_cells() | abs_cells
+        new_filled_cells = set(state.board.get_filled_cells())
+        new_filled_cells.update(abs_cells)
 
         new_board = Board(
             state.board.N,
@@ -915,6 +913,14 @@ def solve_nuruomino():
     if DEBUG_MODE:
         print("\n--- End of Execution ---", file=sys.stderr)
 
-
+DEBUG_MODE_CPROFILE = False
 if __name__ == "__main__":
-    solve_nuruomino()
+    if DEBUG_MODE_CPROFILE:
+        import cProfile
+        import pstats
+        with cProfile.Profile() as pr:
+            solve_nuruomino()
+        stats = pstats.Stats(pr)
+        stats.sort_stats("cumulative").print_stats(30)
+    if not DEBUG_MODE_CPROFILE:
+        solve_nuruomino()
