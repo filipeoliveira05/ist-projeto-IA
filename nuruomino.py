@@ -599,14 +599,8 @@ class Nuruomino(Problem):
         if not unassigned_regions_info:
             return []
         
-        priority_regions = ['3', '4', '5', '6', '7', '8']
-        for pr in priority_regions:
-            for i, info in enumerate(unassigned_regions_info):
-                if info[2] == pr:
-                    unassigned_regions_info.insert(0, unassigned_regions_info.pop(i))
-                    break
 
-        unassigned_regions_info.sort(key=lambda x: (x[0], x[1], int(x[2])))
+        unassigned_regions_info.sort(key=lambda x: (x[0], x[1], x[2]))
         target_region_id = unassigned_regions_info[0][2]
 
         if DEBUG_MODE:
@@ -675,7 +669,7 @@ class Nuruomino(Problem):
             state.board.regions_map,
             state.board.cell_to_region_id_map,
             new_assignments,
-            state.board.get_forbidden_cells(),
+            set(state.board.get_forbidden_cells()),
             new_filled_cells,
         )
         new_board.mark_forbidden_2x2(
@@ -732,69 +726,26 @@ class Nuruomino(Problem):
 
     def h(self, node):
         board = node.state.board
-        unassigned_regions = [
-            rid for rid in self.all_region_ids if rid not in board.assignments
-        ]
-        num_forbidden_cells = len(board.get_forbidden_cells())
+        unassigned_count = 0
+        min_placements = 1000 # Start with a large number
 
-        if not unassigned_regions:
+        for rid in self.all_region_ids:
+            if rid not in board.assignments:
+                unassigned_count += 1
+                placements_count = len(board.regions_map[rid]['valid_placements'])
+                
+                if placements_count == 0:
+                    return float('inf') # Dead end, prune immediately
+                
+                if placements_count < min_placements:
+                    min_placements = placements_count
+        
+        if unassigned_count == 0:
             return 0
-
-        if not self._check_future_connectivity(board):
-            if DEBUG_MODE:
-                print(
-                    f"Heuristic PRUNED (Connectivity) for state {node.state.id}",
-                    file=sys.stderr,
-                )
-            return float("inf")
-
-        min_valid_placements = float("inf")
-        for rid in unassigned_regions:
-            num_valid = len(board.regions_map[rid]["valid_placements"])
-            if num_valid == 0:
-                return float("inf")
-            min_valid_placements = min(min_valid_placements, num_valid)
-
-        mrv_heuristic_term = 0
-        if min_valid_placements != float("inf"):
-            mrv_heuristic_term = 1.0 / (
-                min_valid_placements + 1e-6
-            )
-
-        unassigned_regions_count = len(unassigned_regions)
-
-        forbidden_cells_heuristic_term = num_forbidden_cells
-
-        total_degree_unassigned = 0
-        for rid in unassigned_regions:
-            degree_for_rid = sum(
-                1
-                for adj_rid in self.region_adjacencies.get(rid, frozenset())
-                if adj_rid in unassigned_regions
-            )
-            total_degree_unassigned += degree_for_rid
-
-        weight_unassigned_regions = (
-            1000
-        )
-        weight_mrv = 500
-        weight_forbidden_cells = 100
-        weight_degree = 500
-
-        h_value = (
-            (weight_unassigned_regions * unassigned_regions_count)
-            + (weight_mrv * mrv_heuristic_term)
-            + (weight_forbidden_cells * forbidden_cells_heuristic_term)
-            + (weight_degree * total_degree_unassigned)
-        )
-
-        if DEBUG_MODE:
-            print(
-                f"Heuristic for state {node.state.id}: Unassigned={unassigned_regions_count}, MRV_term={mrv_heuristic_term:.2f}, Forbidden={forbidden_cells_heuristic_term}, Degree_U={total_degree_unassigned}, h={h_value}",
-                file=sys.stderr,
-            )
-
-        return h_value
+            
+        # A simple, fast combination of progress (unassigned_count) and MRV (min_placements)
+        # The weights prioritize finishing the puzzle above all else.
+        return (unassigned_count * 100) + min_placements
 
 
 def solve_nuruomino():
